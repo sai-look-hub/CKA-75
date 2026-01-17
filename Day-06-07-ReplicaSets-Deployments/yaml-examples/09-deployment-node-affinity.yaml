@@ -1,0 +1,32 @@
+# File: 09-deployment-node-affinity.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-node-affinity
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: disktype
+                operator: In
+                values:
+                - ssd
+      containers:
+      - name: webapp
+        image: nginx:1.25
+
+# First label a node: kubectl label nodes <node-name> disktype=ssd
+
+---

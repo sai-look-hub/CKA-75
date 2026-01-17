@@ -1,0 +1,39 @@
+# File: 08-multi-container-deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-with-sidecar
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      # Main application
+      - name: webapp
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log/nginx
+      
+      # Sidecar: Log collector
+      - name: log-collector
+        image: busybox:1.28
+        command: ['sh', '-c', 'tail -f /logs/access.log']
+        volumeMounts:
+        - name: logs
+          mountPath: /logs
+      
+      volumes:
+      - name: logs
+        emptyDir: {}
+
+---

@@ -1,0 +1,25 @@
+# File: 04-recreate-deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-recreate
+spec:
+  replicas: 3
+  strategy:
+    type: Recreate  # All old pods deleted before new ones created
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+
+---

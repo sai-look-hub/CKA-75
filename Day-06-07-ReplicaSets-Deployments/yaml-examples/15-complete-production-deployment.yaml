@@ -1,0 +1,261 @@
+# 15. COMPLETE PROJECT: PRODUCTION DEPLOYMENT WITH ALL FEATURES
+
+# File: 15-complete-production-deployment.yaml
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webapp-prod-config
+  labels:
+    app: webapp-prod
+data:
+  nginx.conf: |
+    server {
+      listen 80;
+      location / {
+        root /usr/share/nginx/html;
+        index index.html;
+      }
+      location /health {
+        return 200 'healthy';
+        add_header Content-Type text/plain;
+      }
+    }
+  app.properties: |
+    environment=production
+    log.level=info
+    max.connections=1000
+
+---
+# Secret for sensitive data
+apiVersion: v1
+kind: Secret
+metadata:
+  name: webapp-prod-secrets
+  labels:
+    app: webapp-prod
+type: Opaque
+stringData:
+  database-password: "prod-db-pass-123"
+  api-key: "prod-api-key-xyz"
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-production-complete
+  labels:
+    app: webapp-prod
+    environment: production
+  annotations:
+    kubernetes.io/change-cause: "Initial production deployment v1.0"
+spec:
+  replicas: 5
+  revisionHistoryLimit: 10
+  
+  # Rolling update strategy
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  
+  selector:
+    matchLabels:
+      app: webapp-prod
+  
+  template:
+    metadata:
+      labels:
+        app: webapp-prod
+        environment: production
+        version: v1.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9113"
+    
+    spec:
+      # Init container
+      initContainers:
+      - name: init-config
+        image: busybox:1.28
+        command:
+        - 'sh'
+        - '-c'
+        - |
+          echo "Initializing production application..."
+          echo "Deployment started at: $(date)" > /shared/deployment.log
+          echo "Environment: production" >> /shared/deployment.log
+        volumeMounts:
+        - name: shared-data
+          mountPath: /shared
+      
+      # Main containers
+      containers:
+      # Application container
+      - name: nginx
+        image: nginx:1.25
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+        
+        # Resource management
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        
+        # Health probes
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 3
+          timeoutSeconds: 2
+          successThreshold: 1
+          failureThreshold: 2
+        
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 80
+          failureThreshold: 30
+          periodSeconds: 10
+        
+        # Environment from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: webapp-prod-config
+        
+        # Environment from Secret
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: webapp-prod-secrets
+              key: database-password
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: webapp-prod-secrets
+              key: api-key
+        
+        # Volume mounts
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/nginx/conf.d
+        - name: shared-data
+          mountPath: /shared
+        - name: logs
+          mountPath: /var/log/nginx
+      
+      # Sidecar: Log collector
+      - name: log-collector
+        image: busybox:1.28
+        command:
+        - 'sh'
+        - '-c'
+        - |
+          echo "Log collector started"
+          while true; do
+            if [ -f /logs/access.log ]; then
+              tail -n 10 /logs/access.log
+            fi
+            sleep 30
+          done
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: logs
+          mountPath: /logs
+      
+      # Volumes
+      volumes:
+      - name: config-volume
+        configMap:
+          name: webapp-prod-config
+      - name: shared-data
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      
+      # Pod scheduling
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - webapp-prod
+              topologyKey: kubernetes.io/hostname
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-prod-service
+  labels:
+    app: webapp-prod
+spec:
+  selector:
+    app: webapp-prod
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  type: LoadBalancer
+
+---
+# HorizontalPodAutoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: webapp-prod-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: webapp-production-complete
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

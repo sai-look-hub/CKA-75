@@ -1,0 +1,80 @@
+# File: 06-blue-green-deployment.yaml
+---
+# Blue deployment (current production - v1.25)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-blue
+  labels:
+    app: webapp
+    version: blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: webapp
+        version: blue
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+        env:
+        - name: VERSION
+          value: "blue-v1.25"
+
+---
+# Green deployment (new version - v1.26)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-green
+  labels:
+    app: webapp
+    version: green
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+      version: green
+  template:
+    metadata:
+      labels:
+        app: webapp
+        version: green
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.26
+        ports:
+        - containerPort: 80
+        env:
+        - name: VERSION
+          value: "green-v1.26"
+
+---
+# Service (initially points to blue)
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-service
+spec:
+  selector:
+    app: webapp
+    version: blue  # Switch to 'green' to cutover
+  ports:
+  - port: 80
+    targetPort: 80
+  type: LoadBalancer
+
+# To switch from blue to green:
+# kubectl patch service webapp-service -p '{"spec":{"selector":{"version":"green"}}}'
+
+---

@@ -1,0 +1,69 @@
+# File: 07-canary-deployment.yaml
+---
+# Stable deployment (90% of traffic)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-stable
+  labels:
+    app: webapp
+spec:
+  replicas: 9  # 90% of pods
+  selector:
+    matchLabels:
+      app: webapp
+      track: stable
+  template:
+    metadata:
+      labels:
+        app: webapp
+        track: stable
+        version: v1.25
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+
+---
+# Canary deployment (10% of traffic)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-canary
+  labels:
+    app: webapp
+spec:
+  replicas: 1  # 10% of pods
+  selector:
+    matchLabels:
+      app: webapp
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: webapp
+        track: canary
+        version: v1.26
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.26
+        ports:
+        - containerPort: 80
+
+---
+# Service (load balances across both stable and canary)
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-canary-service
+spec:
+  selector:
+    app: webapp  # Matches both stable and canary
+  ports:
+  - port: 80
+    targetPort: 80
+
+---

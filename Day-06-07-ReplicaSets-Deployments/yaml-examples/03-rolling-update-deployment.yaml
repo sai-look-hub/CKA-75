@@ -1,0 +1,30 @@
+# File: 03-rolling-update-deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-rolling
+  labels:
+    app: webapp
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2        # Max 2 extra pods during update
+      maxUnavailable: 1  # Max 1 pod unavailable during update
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+
+---

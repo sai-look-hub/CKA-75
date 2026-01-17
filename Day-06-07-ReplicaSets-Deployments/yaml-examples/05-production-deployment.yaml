@@ -1,0 +1,75 @@
+# File: 05-production-deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-production
+  labels:
+    app: webapp
+    environment: production
+  annotations:
+    description: "Production web application with full monitoring"
+spec:
+  replicas: 5
+  revisionHistoryLimit: 10  # Keep last 10 revisions for rollback
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: webapp
+      environment: production
+  template:
+    metadata:
+      labels:
+        app: webapp
+        environment: production
+        version: v1.0
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+          name: http
+        
+        # Resource management
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 3
+          successThreshold: 1
+          failureThreshold: 2
+        
+        # Environment variables
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: VERSION
+          value: "v1.0"
+        - name: LOG_LEVEL
+          value: "info"
+
+---

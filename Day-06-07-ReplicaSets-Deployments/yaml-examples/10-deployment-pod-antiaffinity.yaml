@@ -1,0 +1,35 @@
+# File: 10-deployment-pod-antiaffinity.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-spread
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - webapp
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: webapp
+        image: nginx:1.25
+
+# This spreads pods across different nodes
+
+---

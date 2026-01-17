@@ -1,0 +1,34 @@
+# File: 12-deployment-with-configmap.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webapp-config
+data:
+  database_url: "postgresql://db:5432/myapp"
+  log_level: "info"
+  max_connections: "100"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-configmap
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        envFrom:
+        - configMapRef:
+            name: webapp-config
+
+---

@@ -1,0 +1,43 @@
+# File: 11-deployment-with-init.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-with-init
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      initContainers:
+      - name: init-setup
+        image: busybox:1.28
+        command:
+        - 'sh'
+        - '-c'
+        - |
+          echo "Initializing application..."
+          echo "Config generated at $(date)" > /config/init.log
+        volumeMounts:
+        - name: config
+          mountPath: /config
+      
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: config
+          mountPath: /etc/config
+      
+      volumes:
+      - name: config
+        emptyDir: {}
+
+---
