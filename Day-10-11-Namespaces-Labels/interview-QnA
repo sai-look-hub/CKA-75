@@ -1,0 +1,818 @@
+Interview Questions - Namespaces & Labels
+📚 Complete Q&A for Day 10-11
+
+🗂️ Namespace Questions
+Q1: What is a Kubernetes Namespace and why would you use it?
+Answer:
+A Namespace is a virtual cluster inside a physical Kubernetes cluster. It provides a scope for resource names and enables resource isolation.
+Use Cases:
+
+Multi-tenancy: Separate teams/projects (team-alpha, team-beta)
+Environment separation: dev, staging, prod
+Resource isolation: Apply quotas and limits per namespace
+Access control: RBAC policies per namespace
+Organization: Logical grouping of resources
+
+Example:
+bash# Create namespace
+kubectl create namespace dev
+
+# Deploy to namespace
+kubectl apply -f app.yaml -n dev
+Key Point: Resources in different namespaces can have the same name.
+
+Q2: What are the default namespaces in Kubernetes?
+Answer:
+NamespacePurposedefaultDefault namespace for resources without namespace specifiedkube-systemFor Kubernetes system components (API server, scheduler, etc.)kube-publicPublicly readable by all users, rarely usedkube-node-leaseFor node heartbeat/lease objects (performance improvement)
+Important:
+
+Don't delete kube-system - cluster will break
+Avoid deploying to kube-system
+kube-public is readable by unauthenticated users
+
+
+Q3: How do you switch between namespaces?
+Answer:
+Method 1: Using kubectl -n flag
+bashkubectl get pods -n dev
+kubectl get pods -n prod
+Method 2: Set default namespace in context
+bash# Set default namespace
+kubectl config set-context --current --namespace=dev
+
+# Verify
+kubectl config view --minify | grep namespace
+
+# Now all commands use dev namespace
+kubectl get pods  # Gets pods from dev namespace
+Method 3: Create separate contexts
+bashkubectl config set-context dev --namespace=dev --cluster=my-cluster --user=my-user
+kubectl config set-context prod --namespace=prod --cluster=my-cluster --user=my-user
+
+# Switch contexts
+kubectl config use-context dev
+kubectl config use-context prod
+
+Q4: What happens when you delete a namespace?
+Answer:
+When you delete a namespace, ALL resources inside it are deleted including:
+
+Pods
+Services
+Deployments
+ConfigMaps
+Secrets
+PersistentVolumeClaims
+Everything else in that namespace
+
+Process:
+bashkubectl delete namespace dev
+# Triggers cascade deletion of all resources
+Safety measures:
+
+Namespace deletion can be slow (waits for graceful pod termination)
+Some resources may have finalizers preventing deletion
+No undo - deleted resources are gone forever
+
+Best Practice: Always backup before deleting namespaces in production.
+
+Q5: Can resources in different namespaces communicate with each other?
+Answer:
+Yes, resources can communicate across namespaces using fully qualified DNS names.
+DNS Format:
+<service-name>.<namespace>.svc.cluster.local
+Example:
+bash# Service in namespace 'prod'
+backend-service.prod.svc.cluster.local
+
+# From pod in 'dev' namespace, you can access:
+curl http://backend-service.prod.svc.cluster.local:8080
+Important:
+
+Services are namespaced
+Network Policies can restrict cross-namespace communication
+Some resources are cluster-wide (nodes, persistent volumes)
+
+
+Q6: Which Kubernetes resources are NOT namespaced?
+Answer:
+Cluster-scoped resources (NOT namespaced):
+
+Nodes
+PersistentVolumes (PV)
+ClusterRoles
+ClusterRoleBindings
+StorageClasses
+Namespaces themselves
+CustomResourceDefinitions (CRDs)
+
+Check if resource is namespaced:
+bash# List all API resources
+kubectl api-resources
+
+# Namespaced resources show "true" in NAMESPACED column
+# Cluster-scoped show "false"
+
+# Quick check
+kubectl api-resources --namespaced=false  # Cluster-scoped
+kubectl api-resources --namespaced=true   # Namespaced
+
+🏷️ Label Questions
+Q7: What are Labels in Kubernetes and why are they important?
+Answer:
+Labels are key-value pairs attached to Kubernetes objects for identification and organization.
+Characteristics:
+
+Key-value pairs (e.g., app=frontend, tier=web)
+Used for grouping and selecting resources
+Can have multiple labels per object
+Used by label selectors for queries
+
+Use Cases:
+
+Service Selection: Services use labels to find pods
+Deployments: Select which pods to manage
+Organization: Group resources logically
+Bulk Operations: Update/delete resources by label
+Monitoring: Filter metrics by labels
+
+Example:
+yamlmetadata:
+  labels:
+    app: frontend
+    tier: presentation
+    environment: production
+    version: v1.0
+
+Q8: What's the difference between Labels and Annotations?
+Answer:
+FeatureLabelsAnnotationsPurposeIdentification & selectionMetadata & documentationUsed byKubernetes (selectors)Humans & toolsSize limit63 characters per value256KB totalQueryingCan query with selectorsCannot queryCharactersAlphanumeric, -, _, .Any valid string
+Labels Example:
+yamllabels:
+  app: backend
+  tier: application
+  environment: prod
+Used by: Services, ReplicaSets, selectors
+Annotations Example:
+yamlannotations:
+  description: "Backend API server"
+  contact: "backend-team@company.com"
+  build-date: "2026-01-21"
+  jira-ticket: "PROJ-1234"
+Used by: Humans, CI/CD tools, monitoring
+Key Difference: Labels are for Kubernetes to select resources, Annotations are for metadata.
+
+Q9: What are Label Selectors? Explain equality-based and set-based selectors.
+Answer:
+Label Selectors are used to filter/select Kubernetes resources based on labels.
+1. Equality-Based Selectors:
+Simple equality/inequality checks.
+bash# Equals
+kubectl get pods -l app=frontend
+
+# Not equals
+kubectl get pods -l app!=backend
+
+# Multiple conditions (AND)
+kubectl get pods -l app=frontend,tier=web
+In YAML (Services, older resources):
+yamlselector:
+  app: frontend
+  tier: web
+2. Set-Based Selectors:
+More powerful, supports multiple values.
+bash# In operator
+kubectl get pods -l 'environment in (prod,staging)'
+
+# NotIn operator
+kubectl get pods -l 'tier notin (cache,database)'
+
+# Exists (label key exists)
+kubectl get pods -l version
+
+# DoesNotExist (label key doesn't exist)
+kubectl get pods -l '!legacy'
+In YAML (Deployments, ReplicaSets):
+yamlselector:
+  matchLabels:
+    app: frontend
+  matchExpressions:
+  - key: environment
+    operator: In
+    values: [prod, staging]
+  - key: tier
+    operator: NotIn
+    values: [cache]
+Operators:
+
+In: Value is in list
+NotIn: Value not in list
+Exists: Label key exists
+DoesNotExist: Label key doesn't exist
+
+
+Q10: How do Services use labels to select pods?
+Answer:
+Services use label selectors to identify which pods to route traffic to.
+Process:
+
+Service defines selector
+Service continuously watches for pods matching selector
+Matching pods are added to service endpoints
+Traffic is load balanced across endpoints
+
+Example:
+yaml# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  selector:
+    app: frontend     # Selects pods with app=frontend
+    tier: web        # AND tier=web
+  ports:
+  - port: 80
+
+---
+# Pods with matching labels
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: frontend    # ✓ Matches
+    tier: web       # ✓ Matches
+Check Endpoints:
+bashkubectl get endpoints frontend-service
+# Shows IP addresses of pods matching selector
+If selector doesn't match any pods:
+
+Service has no endpoints
+Traffic won't route anywhere
+
+
+Q11: Can you change labels on running resources?
+Answer:
+Yes, you can add, update, or remove labels on running resources.
+Add Label:
+bashkubectl label pods my-pod app=frontend
+Update Label (requires --overwrite):
+bashkubectl label pods my-pod version=v2.0 --overwrite
+Remove Label (note the minus):
+bashkubectl label pods my-pod version-
+Important Implications:
+
+Services: Changing pod labels can add/remove pods from service endpoints
+
+bash# Remove label - pod removed from service
+kubectl label pod my-pod app-
+
+Deployments: Changing deployment selector can orphan pods
+
+bash# Changing selector can leave old pods running
+# They're no longer managed by deployment
+
+Best Practice: Don't change labels that are used by selectors on running resources.
+
+
+📊 Resource Quota & LimitRange Questions
+Q12: What is a ResourceQuota and when would you use it?
+Answer:
+ResourceQuota limits aggregate resource consumption per namespace.
+Use Cases:
+
+Multi-tenancy: Prevent one team from using all cluster resources
+Cost control: Limit spending per project/environment
+Stability: Prevent resource exhaustion
+Fair allocation: Ensure fair resource distribution
+
+What can be limited:
+
+CPU/Memory (requests & limits)
+Number of objects (pods, services, PVCs)
+Storage
+Extended resources (GPUs, etc.)
+
+Example:
+yamlapiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-quota
+  namespace: dev
+spec:
+  hard:
+    requests.cpu: "10"          # Total CPU requests
+    requests.memory: 20Gi       # Total memory requests
+    limits.cpu: "20"            # Total CPU limits
+    limits.memory: 40Gi         # Total memory limits
+    pods: "50"                  # Max 50 pods
+    services: "20"              # Max 20 services
+    persistentvolumeclaims: "10" # Max 10 PVCs
+Check Usage:
+bashkubectl describe resourcequota dev-quota -n dev
+# Shows: Used vs Hard limits
+What happens when quota exceeded:
+
+Pod creation fails with error: "exceeded quota"
+Must delete resources or increase quota
+
+
+Q13: What's the difference between ResourceQuota and LimitRange?
+Answer:
+FeatureResourceQuotaLimitRangeScopeNamespace totalIndividual resourcesPurposeLimit aggregate consumptionSet defaults & constraintsApplies toSum of all resourcesEach pod/containerWhen checkedAt creation timeAt creation & update
+ResourceQuota (Total Limits):
+yaml# Total for entire namespace
+hard:
+  requests.cpu: "10"    # All pods combined
+  pods: "50"           # Maximum 50 pods total
+LimitRange (Per-Resource Limits):
+yaml# Per container/pod
+limits:
+- type: Container
+  max:
+    cpu: "2"          # Each container max 2 CPUs
+    memory: 2Gi       # Each container max 2GB
+  default:
+    cpu: "500m"       # Default if not specified
+    memory: 512Mi
+Use Together:
+LimitRange: Ensures each pod has reasonable limits
+ResourceQuota: Ensures namespace doesn't exceed total budget
+
+Q14: What is a LimitRange and why is it important?
+Answer:
+LimitRange sets constraints and defaults for resource requests/limits per object in a namespace.
+Key Functions:
+
+Set Defaults (if pod doesn't specify):
+
+yamldefault:
+  cpu: "500m"
+  memory: 512Mi
+
+Set Minimum Values:
+
+yamlmin:
+  cpu: "50m"
+  memory: 64Mi
+
+Set Maximum Values:
+
+yamlmax:
+  cpu: "2"
+  memory: 2Gi
+
+Set Request/Limit Ratios:
+
+yamlmaxLimitRequestRatio:
+  cpu: "4"  # Limit can be max 4x request
+Why Important:
+
+Prevents resource hogging: No single pod can consume all node resources
+Ensures scheduling: Pods have reasonable requests for scheduler
+Cluster stability: Prevents OOM kills and CPU starvation
+Developer convenience: Developers don't need to specify limits
+
+Example:
+yamlapiVersion: v1
+kind: LimitRange
+metadata:
+  name: dev-limits
+  namespace: dev
+spec:
+  limits:
+  - type: Container
+    max:
+      cpu: "2"
+      memory: 2Gi
+    min:
+      cpu: "50m"
+      memory: 64Mi
+    default:
+      cpu: "500m"
+      memory: 512Mi
+    defaultRequest:
+      cpu: "100m"
+      memory: 128Mi
+What happens:
+
+Pod without limits gets defaults
+Pod with limits > max gets rejected
+Pod with limits < min gets rejected
+
+
+🎯 Scenario-Based Questions
+Q15: You have a service that can't find its pods. How would you troubleshoot?
+Answer:
+Step-by-step debugging:
+1. Check service selector:
+bashkubectl get svc my-service -o yaml | grep -A 3 selector
+# Output: selector labels
+2. Check pod labels:
+bashkubectl get pods --show-labels
+# Verify pods have matching labels
+3. Check endpoints:
+bashkubectl get endpoints my-service
+# If empty → selector doesn't match any pods
+4. Common Issues:
+Issue A: Label Mismatch
+yaml# Service selector
+selector:
+  app: frontend
+  tier: web
+
+# Pod labels (WRONG - missing tier)
+labels:
+  app: frontend
+  # Missing: tier: web
+Fix:
+bashkubectl label pods my-pod tier=web
+Issue B: Wrong Namespace
+bash# Service in 'prod', pods in 'dev'
+kubectl get svc my-service -n prod
+kubectl get pods -n dev  # Wrong namespace!
+Issue C: Typo in Label
+yaml# Service selector
+selector:
+  app: frontend
+
+# Pod label (typo)
+labels:
+  app: frontent  # Typo!
+5. Verify Fix:
+bashkubectl get endpoints my-service
+# Should show pod IPs now
+
+Q16: How would you implement a blue-green deployment using labels?
+Answer:
+Blue-Green Deployment Pattern:
+Two identical environments, switch traffic instantly.
+Implementation:
+Step 1: Deploy Blue (current production)
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: myapp
+        version: blue
+Step 2: Deploy Green (new version)
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-green
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+      version: green
+  template:
+    metadata:
+      labels:
+        app: myapp
+        version: green
+Step 3: Service Initially Points to Blue
+yamlapiVersion: v1
+kind: Service
+metadata:
+  name: app-service
+spec:
+  selector:
+    app: myapp
+    version: blue  # Points to blue
+  ports:
+  - port: 80
+Step 4: Switch to Green (Cutover)
+bash# Change selector to green
+kubectl patch service app-service \
+  -p '{"spec":{"selector":{"version":"green"}}}'
+
+# Instant traffic switch!
+Step 5: Rollback if Needed
+bash# Switch back to blue
+kubectl patch service app-service \
+  -p '{"spec":{"selector":{"version":"blue"}}}'
+Advantages:
+
+Instant cutover (0 downtime)
+Instant rollback
+Test green thoroughly before cutover
+Blue kept for rollback
+
+
+Q17: Your team wants to deploy to multiple environments (dev/staging/prod). How would you organize this?
+Answer:
+Strategy: Namespace per Environment
+1. Create Namespaces:
+bashkubectl create namespace dev
+kubectl create namespace staging
+kubectl create namespace prod
+
+# Label them
+kubectl label ns dev environment=development
+kubectl label ns staging environment=staging
+kubectl label ns prod environment=production critical=true
+2. Set Resource Quotas:
+yaml# dev-quota.yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-quota
+  namespace: dev
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    pods: "50"
+---
+# prod-quota.yaml (larger)
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: prod-quota
+  namespace: prod
+spec:
+  hard:
+    requests.cpu: "50"
+    requests.memory: 100Gi
+    pods: "200"
+3. Set LimitRanges:
+yaml# dev-limits.yaml (smaller defaults)
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: dev-limits
+  namespace: dev
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: 512Mi
+---
+# prod-limits.yaml (larger defaults)
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: prod-limits
+  namespace: prod
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "1"
+      memory: 1Gi
+4. Deploy Application:
+bash# Same manifest, different namespace
+kubectl apply -f app.yaml -n dev
+kubectl apply -f app.yaml -n staging
+kubectl apply -f app.yaml -n prod
+5. Environment-Specific Overrides:
+yaml# base-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  labels:
+    app: myapp
+spec:
+  replicas: 3  # Override per environment
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+        environment: ${ENVIRONMENT}  # Inject via kustomize/helm
+6. Access Control (RBAC):
+yaml# Developers: access to dev/staging only
+# SRE: access to all namespaces
+# Restrict prod access
+Benefits:
+
+Clear separation
+Resource isolation
+Different quotas per environment
+Easy to see what's running where
+RBAC per namespace
+
+
+Q18: How would you find all pods across all namespaces that belong to your team?
+Answer:
+Solution: Use consistent labeling strategy
+Step 1: Label Resources by Team
+yamlmetadata:
+  labels:
+    team: alpha
+    app: myapp
+    environment: prod
+Step 2: Query Across All Namespaces
+bash# Find all pods for team alpha
+kubectl get pods --all-namespaces -l team=alpha
+
+# With more details
+kubectl get pods -A -l team=alpha -o wide
+
+# All resources for team
+kubectl get all -A -l team=alpha
+
+# Specific resource types
+kubectl get deployments,services,pods -A -l team=alpha
+Step 3: Count Resources
+bash# Count pods per namespace for team
+kubectl get pods -A -l team=alpha --no-headers | \
+  awk '{print $1}' | sort | uniq -c
+
+# Output:
+#   5 dev
+#  10 staging
+#  20 prod
+Step 4: Resource Usage
+bash# Total CPU/memory used by team
+kubectl top pods -A -l team=alpha
+
+# By environment
+kubectl top pods -n prod -l team=alpha
+Step 5: Create Convenient Script
+bash#!/bin/bash
+# team-resources.sh
+TEAM=$1
+kubectl get all -A -l team=$TEAM
+kubectl top pods -A -l team=$TEAM
+
+🎓 CKA Exam Tips
+Q19: What are the most important commands for the CKA exam related to namespaces and labels?
+Answer:
+Must-Know Commands:
+bash# 1. Create namespace
+kubectl create namespace test
+
+# 2. Switch namespace
+kubectl config set-context --current --namespace=test
+
+# 3. Add label
+kubectl label pod nginx app=web
+
+# 4. Query by label
+kubectl get pods -l app=web
+
+# 5. Show labels
+kubectl get pods --show-labels
+
+# 6. Delete by label
+kubectl delete pods -l temporary=true
+
+# 7. Check resource quota
+kubectl describe quota -n test
+
+# 8. Across all namespaces
+kubectl get pods -A
+
+# 9. Generate YAML
+kubectl create ns test --dry-run=client -o yaml
+
+# 10. Update label
+kubectl label pod nginx version=v2 --overwrite
+Time-Saving Tips:
+
+Use aliases:
+
+bashalias k=kubectl
+alias kgp='kubectl get pods'
+alias kgpl='kubectl get pods --show-labels'
+
+Use -n flag instead of switching context
+
+bashkubectl get pods -n test  # Faster than switching
+
+Use label selectors for bulk operations
+
+bashkubectl delete pods -l env=test  # Delete multiple at once
+
+Check both selectors and labels
+
+bash# When debugging, always check both
+kubectl get svc my-svc -o yaml | grep -A 3 selector
+kubectl get pods --show-labels
+
+💡 Best Practices
+Q20: What are the best practices for organizing Kubernetes resources with namespaces and labels?
+Answer:
+Namespace Best Practices:
+
+One namespace per environment
+
+dev, staging, prod
+team-alpha, team-beta
+
+
+Always set quotas and limits
+
+Prevent resource exhaustion
+Fair resource allocation
+
+
+Use meaningful names
+
+✓ team-alpha-prod
+✗ namespace1
+
+
+Don't overuse namespaces
+
+Too many namespaces = hard to manage
+Group related resources together
+
+
+Label your namespaces
+
+yamlmetadata:
+  labels:
+    environment: production
+    team: platform
+    cost-center: "1234"
+Label Best Practices:
+
+Use consistent naming
+
+yamllabels:
+  app: myapp              # Application name
+  tier: frontend          # Layer in architecture
+  environment: production # Environment
+  version: v1.0.0         # Version
+  team: alpha             # Owning team
+  component: api          # Specific component
+
+Common label keys:
+
+app or app.kubernetes.io/name
+version or app.kubernetes.io/version
+component or app.kubernetes.io/component
+tier
+environment
+team
+
+
+Use recommended labels (Kubernetes standard):
+
+yamllabels:
+  app.kubernetes.io/name: myapp
+  app.kubernetes.io/instance: myapp-prod
+  app.kubernetes.io/version: "1.0.0"
+  app.kubernetes.io/component: database
+  app.kubernetes.io/part-of: ecommerce
+  app.kubernetes.io/managed-by: helm
+
+Keep labels simple
+
+✓ environment: prod
+✗ environment: production-us-west-2-primary
+
+
+Don't put changing data in labels
+
+✗ timestamps, build numbers
+✓ Use annotations for these
+
+
+
+Annotation Best Practices:
+yamlannotations:
+  # Build info
+  build.number: "12345"
+  git.commit: "a1b2c3d4"
+  
+  # Contact info
+  team.email: "team@company.com"
+  
+  # Documentation
+  docs.url: "https://docs.company.com"
+  
+  # Tool integration
+  prometheus.io/scrape: "true"
+Resource Quota Best Practices:
+
+Start conservative, increase as needed
+Monitor usage regularly
+Set quotas for production namespaces
+Account for bursts (set limits higher than requests)
+
+LimitRange Best Practices:
+
+Always set defaults (convenience for developers)
+Set reasonable maxima (prevent accidents)
+Set minima to ensure schedulability
+Different limits for different environments
+
+
+Remember: Labels are for Kubernetes selectors, Annotations are for metadata!
