@@ -1,0 +1,1001 @@
+# ============================================================================
+# DAY 10-11: NAMESPACES & LABELS - COMPLETE YAML MANIFESTS
+# Multi-Tenant Cluster Setup Simulation
+# ============================================================================
+
+# ============================================================================
+# FILE: manifests/01-basic-namespaces/dev-namespace.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev
+  labels:
+    environment: development
+    team: engineering
+    cost-center: "1001"
+  annotations:
+    description: "Development environment for testing new features"
+    owner: "dev-team@company.com"
+    created-by: "platform-team"
+
+---
+# ============================================================================
+# FILE: manifests/01-basic-namespaces/staging-namespace.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+  labels:
+    environment: staging
+    team: engineering
+    cost-center: "1002"
+  annotations:
+    description: "Staging environment for pre-production testing"
+    owner: "qa-team@company.com"
+    created-by: "platform-team"
+
+---
+# ============================================================================
+# FILE: manifests/01-basic-namespaces/prod-namespace.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod
+  labels:
+    environment: production
+    team: engineering
+    cost-center: "1003"
+    critical: "true"
+  annotations:
+    description: "Production environment - handle with care"
+    owner: "platform-team@company.com"
+    created-by: "platform-team"
+    monitoring: "enabled"
+    backup: "daily"
+
+---
+# ============================================================================
+# FILE: manifests/02-team-namespaces/team-alpha.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-alpha
+  labels:
+    team: alpha
+    department: engineering
+    project: microservices
+    budget: "high"
+  annotations:
+    description: "Team Alpha - Microservices Development"
+    team-lead: "alice@company.com"
+    slack-channel: "#team-alpha"
+    jira-project: "ALPHA"
+
+---
+# ============================================================================
+# FILE: manifests/02-team-namespaces/team-beta.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-beta
+  labels:
+    team: beta
+    department: engineering
+    project: data-platform
+    budget: "medium"
+  annotations:
+    description: "Team Beta - Data Platform"
+    team-lead: "bob@company.com"
+    slack-channel: "#team-beta"
+    jira-project: "BETA"
+
+---
+# ============================================================================
+# FILE: manifests/02-team-namespaces/team-gamma.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-gamma
+  labels:
+    team: gamma
+    department: engineering
+    project: ml-ops
+    budget: "high"
+  annotations:
+    description: "Team Gamma - ML Operations"
+    team-lead: "charlie@company.com"
+    slack-channel: "#team-gamma"
+    jira-project: "GAMMA"
+
+---
+# ============================================================================
+# FILE: manifests/03-resource-quotas/dev-quota.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-quota
+  namespace: dev
+  labels:
+    environment: development
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    persistentvolumeclaims: "10"
+    pods: "50"
+    services: "20"
+    configmaps: "20"
+    secrets: "20"
+
+---
+# ============================================================================
+# FILE: manifests/03-resource-quotas/staging-quota.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: staging-quota
+  namespace: staging
+  labels:
+    environment: staging
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    persistentvolumeclaims: "20"
+    pods: "100"
+    services: "30"
+    configmaps: "30"
+    secrets: "30"
+
+---
+# ============================================================================
+# FILE: manifests/03-resource-quotas/prod-quota.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: prod-quota
+  namespace: prod
+  labels:
+    environment: production
+    critical: "true"
+spec:
+  hard:
+    requests.cpu: "50"
+    requests.memory: 100Gi
+    limits.cpu: "100"
+    limits.memory: 200Gi
+    persistentvolumeclaims: "50"
+    pods: "200"
+    services: "50"
+    configmaps: "50"
+    secrets: "50"
+    services.loadbalancers: "10"
+    services.nodeports: "5"
+
+---
+# ============================================================================
+# FILE: manifests/04-limit-ranges/dev-limits.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: dev-limits
+  namespace: dev
+spec:
+  limits:
+  # Container limits
+  - type: Container
+    max:
+      cpu: "2"
+      memory: 2Gi
+    min:
+      cpu: "50m"
+      memory: 64Mi
+    default:
+      cpu: "500m"
+      memory: 512Mi
+    defaultRequest:
+      cpu: "100m"
+      memory: 128Mi
+  # Pod limits
+  - type: Pod
+    max:
+      cpu: "4"
+      memory: 4Gi
+  # PVC limits
+  - type: PersistentVolumeClaim
+    max:
+      storage: 10Gi
+    min:
+      storage: 1Gi
+
+---
+# ============================================================================
+# FILE: manifests/04-limit-ranges/prod-limits.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: prod-limits
+  namespace: prod
+spec:
+  limits:
+  - type: Container
+    max:
+      cpu: "4"
+      memory: 8Gi
+    min:
+      cpu: "100m"
+      memory: 128Mi
+    default:
+      cpu: "1"
+      memory: 1Gi
+    defaultRequest:
+      cpu: "250m"
+      memory: 256Mi
+  - type: Pod
+    max:
+      cpu: "8"
+      memory: 16Gi
+  - type: PersistentVolumeClaim
+    max:
+      storage: 100Gi
+    min:
+      storage: 5Gi
+
+---
+# ============================================================================
+# FILE: manifests/05-deployments-with-labels/frontend-deployment.yaml
+# ============================================================================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: dev
+  labels:
+    app: frontend
+    tier: presentation
+    environment: development
+    version: v1.0.0
+    team: alpha
+    component: ui
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    description: "Frontend web application"
+    contacts: "frontend-team@company.com"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: frontend
+      tier: presentation
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: presentation
+        environment: development
+        version: v1.0.0
+        team: alpha
+        component: ui
+        release: stable
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+---
+# ============================================================================
+# FILE: manifests/05-deployments-with-labels/backend-deployment.yaml
+# ============================================================================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: dev
+  labels:
+    app: backend
+    tier: application
+    environment: development
+    version: v2.1.0
+    team: alpha
+    component: api
+    language: nodejs
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    description: "Backend REST API"
+    repository: "github.com/company/backend"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+      tier: application
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: application
+        environment: development
+        version: v2.1.0
+        team: alpha
+        component: api
+        language: nodejs
+        release: stable
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+      - name: backend
+        image: nginx:alpine  # Replace with actual backend image
+        ports:
+        - containerPort: 8080
+          name: http
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+---
+# ============================================================================
+# FILE: manifests/05-deployments-with-labels/database-statefulset.yaml
+# ============================================================================
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database
+  namespace: dev
+  labels:
+    app: database
+    tier: data
+    environment: development
+    version: v8.0
+    team: alpha
+    component: mysql
+    stateful: "true"
+  annotations:
+    description: "MySQL Database"
+    backup-schedule: "daily"
+spec:
+  serviceName: database-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+      tier: data
+  template:
+    metadata:
+      labels:
+        app: database
+        tier: data
+        environment: development
+        version: v8.0
+        team: alpha
+        component: mysql
+        stateful: "true"
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        ports:
+        - containerPort: 3306
+          name: mysql
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "password"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+
+---
+# ============================================================================
+# FILE: manifests/06-services-with-labels/frontend-service.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: dev
+  labels:
+    app: frontend
+    tier: presentation
+    environment: development
+    service-type: loadbalancer
+  annotations:
+    description: "Frontend LoadBalancer Service"
+    external-dns.alpha.kubernetes.io/hostname: "dev.example.com"
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+    tier: presentation
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+
+---
+# ============================================================================
+# FILE: manifests/06-services-with-labels/backend-service.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: dev
+  labels:
+    app: backend
+    tier: application
+    environment: development
+    service-type: clusterip
+  annotations:
+    description: "Backend ClusterIP Service"
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+    tier: application
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  sessionAffinity: ClientIP
+
+---
+# ============================================================================
+# FILE: manifests/07-configmaps-with-labels/app-config.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: dev
+  labels:
+    app: backend
+    environment: development
+    config-type: application
+    version: v1.0
+  annotations:
+    description: "Application configuration for dev environment"
+    last-updated: "2026-01-21"
+data:
+  app.properties: |
+    environment=development
+    log.level=debug
+    database.host=database-headless.dev.svc.cluster.local
+    database.port=3306
+    cache.enabled=true
+    max.connections=100
+  features.json: |
+    {
+      "feature_flags": {
+        "new_ui": true,
+        "beta_features": true,
+        "analytics": false
+      }
+    }
+
+---
+# ============================================================================
+# FILE: manifests/08-secrets-with-labels/database-credentials.yaml
+# ============================================================================
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-credentials
+  namespace: dev
+  labels:
+    app: database
+    environment: development
+    secret-type: credentials
+    tier: data
+  annotations:
+    description: "Database credentials for dev environment"
+    rotation-policy: "monthly"
+type: Opaque
+stringData:
+  username: "dev_user"
+  password: "dev_password_123"
+  root-password: "root_password_456"
+  connection-string: "mysql://dev_user:dev_password_123@database-headless:3306/dev_db"
+
+---
+# ============================================================================
+# FILE: examples/01-label-selector-examples.yaml
+# ============================================================================
+---
+# Example 1: Equality-based selector
+apiVersion: v1
+kind: Service
+metadata:
+  name: equality-selector-example
+  namespace: default
+spec:
+  selector:
+    app: myapp           # app == myapp
+    tier: frontend       # tier == frontend
+  ports:
+  - port: 80
+
+---
+# Example 2: Set-based selector (matchExpressions)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: set-based-selector-example
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+    matchExpressions:
+    - key: environment
+      operator: In
+      values: ["prod", "staging"]     # environment in (prod, staging)
+    - key: tier
+      operator: NotIn
+      values: ["cache"]               # tier not in (cache)
+    - key: version
+      operator: Exists                # version label exists
+    - key: legacy
+      operator: DoesNotExist          # legacy label doesn't exist
+  template:
+    metadata:
+      labels:
+        app: myapp
+        environment: prod
+        tier: frontend
+        version: v1.0
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+
+---
+# ============================================================================
+# FILE: examples/02-multi-environment-deployment.yaml
+# ============================================================================
+---
+# Development Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-dev
+  namespace: dev
+  labels:
+    app: myapp
+    environment: development
+    team: alpha
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: myapp
+      environment: development
+  template:
+    metadata:
+      labels:
+        app: myapp
+        environment: development
+        team: alpha
+    spec:
+      containers:
+      - name: app
+        image: myapp:latest
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# Staging Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-staging
+  namespace: staging
+  labels:
+    app: myapp
+    environment: staging
+    team: alpha
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: myapp
+      environment: staging
+  template:
+    metadata:
+      labels:
+        app: myapp
+        environment: staging
+        team: alpha
+    spec:
+      containers:
+      - name: app
+        image: myapp:1.2.0
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+
+---
+# Production Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-prod
+  namespace: prod
+  labels:
+    app: myapp
+    environment: production
+    team: alpha
+    critical: "true"
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: myapp
+      environment: production
+  template:
+    metadata:
+      labels:
+        app: myapp
+        environment: production
+        team: alpha
+        critical: "true"
+    spec:
+      containers:
+      - name: app
+        image: myapp:1.2.0
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+
+---
+# ============================================================================
+# FILE: examples/03-canary-deployment-labels.yaml
+# ============================================================================
+---
+# Stable version (90%)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-stable
+  namespace: prod
+  labels:
+    app: myapp
+    track: stable
+    version: v1.0.0
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: myapp
+      track: stable
+  template:
+    metadata:
+      labels:
+        app: myapp
+        track: stable
+        version: v1.0.0
+    spec:
+      containers:
+      - name: app
+        image: myapp:1.0.0
+
+---
+# Canary version (10%)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-canary
+  namespace: prod
+  labels:
+    app: myapp
+    track: canary
+    version: v1.1.0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: myapp
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: myapp
+        track: canary
+        version: v1.1.0
+    spec:
+      containers:
+      - name: app
+        image: myapp:1.1.0
+
+---
+# Service selecting both stable and canary
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapp-service
+  namespace: prod
+spec:
+  selector:
+    app: myapp  # Matches both stable and canary
+  ports:
+  - port: 80
+    targetPort: 8080
+
+---
+# ============================================================================
+# FILE: examples/04-annotation-examples.yaml
+# ============================================================================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: annotation-examples
+  namespace: default
+  annotations:
+    # Build information
+    build.number: "12345"
+    build.date: "2026-01-21T10:30:00Z"
+    git.commit: "a1b2c3d4"
+    git.branch: "main"
+    
+    # Contact information
+    team.email: "team@company.com"
+    team.slack: "#team-channel"
+    oncall: "https://oncall.company.com/team"
+    
+    # Documentation
+    docs.url: "https://docs.company.com/myapp"
+    runbook.url: "https://runbook.company.com/myapp"
+    
+    # Monitoring
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+    
+    # Deployment metadata
+    deployment.strategy: "rolling"
+    deployment.maxSurge: "25%"
+    deployment.maxUnavailable: "25%"
+    
+    # Custom annotations
+    app.version: "v1.2.3"
+    release.manager: "alice@company.com"
+    jira.ticket: "PROJ-1234"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+      annotations:
+        # Pod-level annotations
+        sidecar.istio.io/inject: "true"
+        backup.velero.io/backup-volumes: "data"
+        config.version: "v1"
+    spec:
+      containers:
+      - name: app
+        image: nginx:alpine
+
+---
+# ============================================================================
+# FILE: project/complete-multi-tenant-cluster.yaml
+# COMPLETE MULTI-TENANT CLUSTER SETUP
+# ============================================================================
+---
+# Create three environments
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev
+  labels:
+    environment: development
+    team: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+  labels:
+    environment: staging
+    team: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod
+  labels:
+    environment: production
+    team: platform
+    critical: "true"
+
+---
+# Resource Quotas for each environment
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-quota
+  namespace: dev
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    pods: "50"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: staging-quota
+  namespace: staging
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    pods: "100"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: prod-quota
+  namespace: prod
+spec:
+  hard:
+    requests.cpu: "50"
+    requests.memory: 100Gi
+    pods: "200"
+
+---
+# LimitRanges for each environment
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: dev-limits
+  namespace: dev
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: 512Mi
+    defaultRequest:
+      cpu: "100m"
+      memory: 128Mi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: prod-limits
+  namespace: prod
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "1"
+      memory: 1Gi
+    defaultRequest:
+      cpu: "250m"
+      memory: 256Mi
+
+---
+# Deploy application to each environment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp
+  namespace: dev
+  labels:
+    app: webapp
+    environment: development
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+        environment: development
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:alpine
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp
+  namespace: prod
+  labels:
+    app: webapp
+    environment: production
+    critical: "true"
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+        environment: production
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.25-alpine
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
