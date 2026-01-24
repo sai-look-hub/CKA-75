@@ -1,0 +1,761 @@
+Kubernetes ConfigMaps & Secrets - Commands Cheatsheet
+
+Quick reference for all ConfigMap and Secret operations
+
+
+Table of Contents
+
+ConfigMap Commands
+Secret Commands
+Viewing and Debugging
+Environment Variables
+Volume Mounts
+Security Operations
+Advanced Operations
+
+
+ConfigMap Commands
+Create ConfigMaps
+bash# Create from literal values
+kubectl create configmap app-config \
+  --from-literal=APP_NAME=myapp \
+  --from-literal=LOG_LEVEL=info \
+  --from-literal=API_URL=https://api.example.com
+
+# Create from single file
+kubectl create configmap nginx-config \
+  --from-file=nginx.conf
+
+# Create from file with custom key
+kubectl create configmap app-config \
+  --from-file=app-properties=application.properties
+
+# Create from multiple files
+kubectl create configmap multi-config \
+  --from-file=config1.yaml \
+  --from-file=config2.yaml
+
+# Create from directory (all files in directory)
+kubectl create configmap app-configs \
+  --from-file=./configs/
+
+# Create from env file
+kubectl create configmap env-config \
+  --from-env-file=./app.env
+
+# Env file format:
+# KEY1=value1
+# KEY2=value2
+
+# Create from YAML
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_NAME: myapp
+  LOG_LEVEL: info
+  config.yaml: |
+    server:
+      port: 8080
+      host: 0.0.0.0
+    database:
+      host: db.example.com
+      port: 5432
+EOF
+
+# Create in specific namespace
+kubectl create configmap app-config \
+  --from-literal=KEY=value \
+  -n production
+
+# Create immutable ConfigMap (K8s 1.21+)
+kubectl create configmap immutable-config \
+  --from-literal=KEY=value \
+  --dry-run=client -o yaml | \
+  sed '$ a\immutable: true' | \
+  kubectl apply -f -
+List and View ConfigMaps
+bash# List all ConfigMaps
+kubectl get configmaps
+kubectl get cm  # Short form
+
+# List in all namespaces
+kubectl get cm -A
+kubectl get cm --all-namespaces
+
+# List in specific namespace
+kubectl get cm -n production
+
+# List with labels
+kubectl get cm --show-labels
+
+# List with custom columns
+kubectl get cm -o custom-columns=NAME:.metadata.name,KEYS:.data
+
+# Describe ConfigMap
+kubectl describe cm app-config
+
+# Get ConfigMap in YAML
+kubectl get cm app-config -o yaml
+
+# Get ConfigMap in JSON
+kubectl get cm app-config -o json
+
+# Get specific key value
+kubectl get cm app-config -o jsonpath='{.data.APP_NAME}'
+
+# Get all keys
+kubectl get cm app-config -o jsonpath='{.data}' | jq 'keys'
+
+# Pretty print data
+kubectl get cm app-config -o json | jq '.data'
+Edit and Update ConfigMaps
+bash# Edit ConfigMap interactively
+kubectl edit cm app-config
+
+# Replace ConfigMap from file
+kubectl replace -f configmap.yaml
+
+# Patch ConfigMap
+kubectl patch cm app-config -p '{"data":{"NEW_KEY":"new_value"}}'
+
+# Update from literal
+kubectl create configmap app-config \
+  --from-literal=UPDATED_KEY=updated_value \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Add new key
+kubectl patch cm app-config --type merge -p '{"data":{"NEW_KEY":"value"}}'
+
+# Remove key (set to null)
+kubectl patch cm app-config --type json -p='[{"op": "remove", "path": "/data/KEY_TO_REMOVE"}]'
+Delete ConfigMaps
+bash# Delete ConfigMap
+kubectl delete cm app-config
+
+# Delete in specific namespace
+kubectl delete cm app-config -n production
+
+# Delete multiple ConfigMaps
+kubectl delete cm config1 config2 config3
+
+# Delete by label
+kubectl delete cm -l app=myapp
+
+# Delete all ConfigMaps in namespace
+kubectl delete cm --all
+
+# Delete from file
+kubectl delete -f configmap.yaml
+
+Secret Commands
+Create Secrets
+bash# Create generic secret from literals
+kubectl create secret generic db-secret \
+  --from-literal=username=admin \
+  --from-literal=password=P@ssw0rd123
+
+# Create from file
+kubectl create secret generic ssh-secret \
+  --from-file=id_rsa=~/.ssh/id_rsa \
+  --from-file=id_rsa.pub=~/.ssh/id_rsa.pub
+
+# Create from directory
+kubectl create secret generic app-secrets \
+  --from-file=./secrets/
+
+# Create TLS secret
+kubectl create secret tls tls-secret \
+  --cert=path/to/cert.crt \
+  --key=path/to/cert.key
+
+# Create Docker registry secret
+kubectl create secret docker-registry regcred \
+  --docker-server=https://index.docker.io/v1/ \
+  --docker-username=myusername \
+  --docker-password=mypassword \
+  --docker-email=myemail@example.com
+
+# Create basic auth secret
+kubectl create secret generic basic-auth \
+  --from-literal=username=admin \
+  --from-literal=password=secret \
+  --type=kubernetes.io/basic-auth
+
+# Create SSH auth secret
+kubectl create secret generic ssh-auth \
+  --from-file=ssh-privatekey=~/.ssh/id_rsa \
+  --type=kubernetes.io/ssh-auth
+
+# Create from YAML (base64 encoded)
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+data:
+  username: $(echo -n 'admin' | base64)
+  password: $(echo -n 'P@ssw0rd123' | base64)
+EOF
+
+# Create from YAML (stringData - auto-encoded)
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+stringData:
+  username: admin
+  password: P@ssw0rd123
+EOF
+
+# Create in specific namespace
+kubectl create secret generic db-secret \
+  --from-literal=password=secret \
+  -n production
+
+# Create immutable secret
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: immutable-secret
+type: Opaque
+data:
+  key: $(echo -n 'value' | base64)
+immutable: true
+EOF
+List and View Secrets
+bash# List all secrets
+kubectl get secrets
+kubectl get secret  # Singular also works
+
+# List in all namespaces
+kubectl get secrets -A
+
+# List in specific namespace
+kubectl get secrets -n production
+
+# List with labels
+kubectl get secrets --show-labels
+
+# Describe secret (doesn't show values)
+kubectl describe secret db-secret
+
+# Get secret in YAML (base64 encoded)
+kubectl get secret db-secret -o yaml
+
+# Get secret in JSON
+kubectl get secret db-secret -o json
+
+# Get specific key value (base64 encoded)
+kubectl get secret db-secret -o jsonpath='{.data.password}'
+
+# Decode secret value
+kubectl get secret db-secret -o jsonpath='{.data.password}' | base64 -d
+
+# Decode all keys
+kubectl get secret db-secret -o json | \
+  jq -r '.data | to_entries[] | .key + ": " + (.value | @base64d)'
+
+# Get secret type
+kubectl get secret db-secret -o jsonpath='{.type}'
+Edit and Update Secrets
+bash# Edit secret interactively
+kubectl edit secret db-secret
+
+# Replace secret from file
+kubectl replace -f secret.yaml
+
+# Update secret from literal
+kubectl create secret generic db-secret \
+  --from-literal=password=newpassword \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Patch secret
+kubectl patch secret db-secret -p '{"stringData":{"newkey":"newvalue"}}'
+
+# Update using stringData (auto-encodes)
+kubectl patch secret db-secret --type merge -p \
+  '{"stringData":{"password":"newpassword"}}'
+Delete Secrets
+bash# Delete secret
+kubectl delete secret db-secret
+
+# Delete in specific namespace
+kubectl delete secret db-secret -n production
+
+# Delete multiple secrets
+kubectl delete secret secret1 secret2 secret3
+
+# Delete by label
+kubectl delete secret -l app=myapp
+
+# Delete all secrets (careful!)
+kubectl delete secret --all
+
+# Delete from file
+kubectl delete -f secret.yaml
+
+Viewing and Debugging
+Inspect ConfigMap/Secret Usage in Pods
+bash# List pods using specific ConfigMap
+kubectl get pods -o json | \
+  jq -r '.items[] | select(.spec.volumes[]?.configMap.name=="app-config") | .metadata.name'
+
+# List pods using specific Secret
+kubectl get pods -o json | \
+  jq -r '.items[] | select(.spec.volumes[]?.secret.secretName=="db-secret") | .metadata.name'
+
+# Check environment variables in pod
+kubectl exec my-pod -- env
+
+# Check mounted ConfigMap in pod
+kubectl exec my-pod -- ls /etc/config
+kubectl exec my-pod -- cat /etc/config/key
+
+# Check mounted Secret in pod
+kubectl exec my-pod -- ls /etc/secrets
+kubectl exec my-pod -- cat /etc/secrets/password
+
+# View pod with ConfigMap/Secret references
+kubectl get pod my-pod -o yaml | grep -A 10 configMap
+kubectl get pod my-pod -o yaml | grep -A 10 secret
+Validate ConfigMaps and Secrets
+bash# Check if ConfigMap exists
+kubectl get cm app-config &>/dev/null && echo "Exists" || echo "Not found"
+
+# Check if Secret exists
+kubectl get secret db-secret &>/dev/null && echo "Exists" || echo "Not found"
+
+# Validate ConfigMap YAML syntax
+kubectl apply -f configmap.yaml --dry-run=client
+
+# Validate Secret YAML syntax
+kubectl apply -f secret.yaml --dry-run=client
+
+# Check ConfigMap size
+kubectl get cm app-config -o json | jq '.data | to_entries | map(.value | length) | add'
+
+# List ConfigMaps > 1KB
+kubectl get cm -o json | \
+  jq -r '.items[] | select((.data | tostring | length) > 1024) | .metadata.name'
+
+Environment Variables
+Using ConfigMap as Environment Variables
+bash# Single key from ConfigMap
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: env-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "echo \$APP_NAME && sleep 3600"]
+    env:
+    - name: APP_NAME
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: APP_NAME
+EOF
+
+# All keys from ConfigMap
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: envfrom-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "env && sleep 3600"]
+    envFrom:
+    - configMapRef:
+        name: app-config
+EOF
+
+# Multiple ConfigMaps
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multi-env-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "env && sleep 3600"]
+    envFrom:
+    - configMapRef:
+        name: app-config
+    - configMapRef:
+        name: db-config
+EOF
+
+# With prefix
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: prefix-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "env && sleep 3600"]
+    envFrom:
+    - configMapRef:
+        name: app-config
+      prefix: APP_
+EOF
+Using Secret as Environment Variables
+bash# Single key from Secret
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secret-env-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "echo \$DB_PASSWORD && sleep 3600"]
+    env:
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: db-secret
+          key: password
+EOF
+
+# All keys from Secret
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secret-envfrom-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "env && sleep 3600"]
+    envFrom:
+    - secretRef:
+        name: db-secret
+EOF
+
+Volume Mounts
+Using ConfigMap as Volume
+bash# Mount entire ConfigMap
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: configmap-volume-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "cat /etc/config/* && sleep 3600"]
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+EOF
+
+# Mount specific keys
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: specific-keys-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "cat /etc/config/special.conf && sleep 3600"]
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+      items:
+      - key: special-key
+        path: special.conf
+EOF
+
+# Mount with specific file permissions
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: permissions-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "ls -la /etc/config && sleep 3600"]
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+      defaultMode: 0644
+EOF
+
+# Mount to specific file
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: subpath-pod
+spec:
+  containers:
+  - name: app
+    image: nginx
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/nginx/nginx.conf
+      subPath: nginx.conf
+  volumes:
+  - name: config-volume
+    configMap:
+      name: nginx-config
+EOF
+Using Secret as Volume
+bash# Mount entire Secret
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secret-volume-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "cat /etc/secrets/* && sleep 3600"]
+    volumeMounts:
+    - name: secret-volume
+      mountPath: /etc/secrets
+      readOnly: true
+  volumes:
+  - name: secret-volume
+    secret:
+      secretName: db-secret
+EOF
+
+# Mount specific keys
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secret-specific-pod
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ["sh", "-c", "cat /etc/secrets/db-password && sleep 3600"]
+    volumeMounts:
+    - name: secret-volume
+      mountPath: /etc/secrets
+      readOnly: true
+  volumes:
+  - name: secret-volume
+    secret:
+      secretName: db-secret
+      items:
+      - key: password
+        path: db-password
+        mode: 0400
+EOF
+
+# TLS secret volume
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tls-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    volumeMounts:
+    - name: tls-volume
+      mountPath: /etc/nginx/ssl
+      readOnly: true
+  volumes:
+  - name: tls-volume
+    secret:
+      secretName: tls-secret
+EOF
+
+Security Operations
+Base64 Encoding/Decoding
+bash# Encode string to base64
+echo -n 'password123' | base64
+# Output: cGFzc3dvcmQxMjM=
+
+# Decode base64
+echo 'cGFzc3dvcmQxMjM=' | base64 -d
+# Output: password123
+
+# Encode file
+cat file.txt | base64
+
+# Decode to file
+echo 'base64string' | base64 -d > output.txt
+
+# Encode for YAML (no wrapping)
+echo -n 'password123' | base64 -w 0
+RBAC for ConfigMaps and Secrets
+bash# Create Role to read ConfigMaps
+kubectl create role configmap-reader \
+  --verb=get,list \
+  --resource=configmaps
+
+# Create Role to manage Secrets
+kubectl create role secret-admin \
+  --verb=get,list,create,update,delete \
+  --resource=secrets
+
+# Bind Role to ServiceAccount
+kubectl create rolebinding configmap-reader-binding \
+  --role=configmap-reader \
+  --serviceaccount=default:my-sa
+
+# Check permissions
+kubectl auth can-i get configmaps --as=system:serviceaccount:default:my-sa
+kubectl auth can-i get secrets --as=system:serviceaccount:default:my-sa
+Audit Secret Access
+bash# Enable audit logging (cluster-level)
+# Check audit logs for secret access
+kubectl logs -n kube-system kube-apiserver-xxx | grep secret
+
+# List who can access secrets
+kubectl get rolebindings,clusterrolebindings -A -o json | \
+  jq -r '.items[] | select(.roleRef.kind=="Role" or .roleRef.kind=="ClusterRole") | 
+  select(.subjects[]?.kind=="User" or .subjects[]?.kind=="ServiceAccount") | 
+  "\(.metadata.namespace):\(.metadata.name) -> \(.subjects[].name)"'
+
+Advanced Operations
+ConfigMap/Secret Rotation
+bash# Create new version of secret
+kubectl create secret generic db-secret-v2 \
+  --from-literal=password=newpassword
+
+# Update deployment to use new secret
+kubectl set env deployment/myapp --from=secret/db-secret-v2 --prefix=DB_
+
+# Or patch deployment
+kubectl patch deployment myapp -p \
+  '{"spec":{"template":{"spec":{"containers":[{"name":"app","envFrom":[{"secretRef":{"name":"db-secret-v2"}}]}]}}}}'
+
+# Rollout deployment
+kubectl rollout restart deployment myapp
+
+# Verify rollout
+kubectl rollout status deployment myapp
+
+# Delete old secret
+kubectl delete secret db-secret
+Backup and Restore
+bash# Backup all ConfigMaps
+kubectl get configmaps -o yaml > configmaps-backup.yaml
+
+# Backup all Secrets
+kubectl get secrets -o yaml > secrets-backup.yaml
+
+# Backup specific namespace
+kubectl get configmaps,secrets -n production -o yaml > production-backup.yaml
+
+# Restore from backup
+kubectl apply -f configmaps-backup.yaml
+kubectl apply -f secrets-backup.yaml
+
+# Backup to Git (ConfigMaps only, never Secrets!)
+kubectl get configmaps -o yaml > configmaps.yaml
+git add configmaps.yaml
+git commit -m "Backup ConfigMaps"
+Generate ConfigMap/Secret from Files
+bash# Generate ConfigMap YAML without creating
+kubectl create configmap app-config \
+  --from-file=config.yaml \
+  --dry-run=client -o yaml > configmap.yaml
+
+# Generate Secret YAML without creating
+kubectl create secret generic db-secret \
+  --from-literal=password=secret \
+  --dry-run=client -o yaml > secret.yaml
+
+# Generate and apply in one command
+kubectl create configmap app-config \
+  --from-file=config.yaml \
+  --dry-run=client -o yaml | kubectl apply -f -
+Useful Aliases
+bash# Add to ~/.bashrc or ~/.zshrc
+
+# ConfigMap aliases
+alias kcm='kubectl get configmaps'
+alias kcma='kubectl get configmaps -A'
+alias kdcm='kubectl describe configmap'
+alias kccm='kubectl create configmap'
+alias kdelcm='kubectl delete configmap'
+
+# Secret aliases
+alias ks='kubectl get secrets'
+alias ksa='kubectl get secrets -A'
+alias kds='kubectl describe secret'
+alias kcs='kubectl create secret'
+alias kdels='kubectl delete secret'
+
+# Decode secret
+kds-decode() {
+    kubectl get secret $1 -o json | jq -r '.data | to_entries[] | .key + ": " + (.value | @base64d)'
+}
+
+# Get ConfigMap keys
+kcm-keys() {
+    kubectl get cm $1 -o json | jq -r '.data | keys[]'
+}
+
+Quick Reference
+Most Common Commands
+bash# ConfigMap
+kubectl create cm app-config --from-literal=KEY=value
+kubectl get cm
+kubectl describe cm app-config
+kubectl delete cm app-config
+
+# Secret
+kubectl create secret generic db-secret --from-literal=password=secret
+kubectl get secrets
+kubectl describe secret db-secret
+kubectl get secret db-secret -o jsonpath='{.data.password}' | base64 -d
+kubectl delete secret db-secret
+
+# Usage in Pod
+# Env var: valueFrom.configMapKeyRef / secretKeyRef
+# Volume: volumes[].configMap / secret
+
+Pro Tips:
+
+Use --dry-run=client -o yaml to generate YAML templates
+Always use stringData for secrets to avoid manual base64 encoding
+Mount secrets as volumes (readOnly) for better security
+Use immutable ConfigMaps in production for safety and performance
+Never commit secrets to Git!
