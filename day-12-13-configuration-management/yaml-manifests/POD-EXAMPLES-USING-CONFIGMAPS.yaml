@@ -1,0 +1,86 @@
+# ============================================
+# 3. POD EXAMPLES USING CONFIGMAPS
+# ============================================
+
+---
+# Pod using ConfigMap as Environment Variables
+apiVersion: v1
+kind: Pod
+metadata:
+  name: configmap-env-pod
+  labels:
+    app: demo
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+    # Individual environment variables
+    env:
+    - name: LOG_LEVEL
+      valueFrom:
+        configMapKeyRef:
+          name: app-config-basic
+          key: log_level
+    - name: ENVIRONMENT
+      valueFrom:
+        configMapKeyRef:
+          name: app-config-basic
+          key: environment
+    # Load all ConfigMap keys as env vars
+    envFrom:
+    - configMapRef:
+        name: app-config-basic
+      prefix: APP_  # Optional prefix
+
+---
+# Pod using ConfigMap as Volume
+apiVersion: v1
+kind: Pod
+metadata:
+  name: configmap-volume-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.21
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+      readOnly: true
+    - name: nginx-config
+      mountPath: /etc/nginx/nginx.conf
+      subPath: nginx.conf
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config-file
+  - name: nginx-config
+    configMap:
+      name: app-config-file
+      items:
+      - key: nginx.conf
+        path: nginx.conf
+        mode: 0644
+
+---
+# Pod with selective ConfigMap keys
+apiVersion: v1
+kind: Pod
+metadata:
+  name: selective-config-pod
+spec:
+  containers:
+  - name: app
+    image: myapp:1.0
+    volumeMounts:
+    - name: config
+      mountPath: /etc/app
+  volumes:
+  - name: config
+    configMap:
+      name: app-config-file
+      items:
+      - key: application.properties
+        path: app.properties
+      - key: config.json
+        path: config.json
+
