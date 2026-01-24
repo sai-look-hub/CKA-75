@@ -1,0 +1,205 @@
+# ============================================
+# 5. DEPLOYMENT EXAMPLES
+# ============================================
+
+---
+# Complete Deployment with ConfigMaps and Secrets
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-application
+  namespace: production
+  labels:
+    app: webapp
+    tier: frontend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+      annotations:
+        # Trigger rolling update when ConfigMap/Secret changes
+        checksum/config: {{ include "configmap" . | sha256sum }}
+        checksum/secret: {{ include "secret" . | sha256sum }}
+    spec:
+      # Use specific ServiceAccount for RBAC
+      serviceAccountName: webapp-sa
+      
+      # Pull images from private registry
+      imagePullSecrets:
+      - name: docker-registry-secret
+      
+      containers:
+      - name: webapp
+        image: myregistry.com/webapp:2.0
+        ports:
+        - containerPort: 8080
+          name: http
+        
+        # Environment variables from multiple sources
+        env:
+        # Static values
+        - name: APP_NAME
+          value: "WebApp"
+        - name: APP_VERSION
+          value: "2.0"
+        
+        # From ConfigMap
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config-basic
+              key: log_level
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config-basic
+              key: environment
+        
+        # From Secret
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: password
+        
+        # From Field Reference
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        
+        # Load all from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: app-config-basic
+          prefix: CONFIG_
+        
+        # Volume mounts
+        volumeMounts:
+        - name: config-files
+          mountPath: /etc/app
+          readOnly: true
+        - name: secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        - name: tls-certs
+          mountPath: /etc/ssl/certs
+          readOnly: true
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        
+        # Resource limits
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      
+      # Volumes
+      volumes:
+      - name: config-files
+        configMap:
+          name: app-config-file
+          items:
+          - key: application.properties
+            path: application.properties
+      - name: secrets
+        secret:
+          secretName: db-credentials
+          defaultMode: 0400
+      - name: tls-certs
+        secret:
+          secretName: tls-secret
+
+---
+# Deployment with Projected Volume
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: projected-volume-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: projected-app
+  template:
+    metadata:
+      labels:
+        app: projected-app
+    spec:
+      containers:
+      - name: app
+        image: myapp:1.0
+        volumeMounts:
+        - name: all-in-one
+          mountPath: /projected-volume
+          readOnly: true
+      
+      volumes:
+      - name: all-in-one
+        projected:
+          sources:
+          # ConfigMap
+          - configMap:
+              name: app-config-file
+              items:
+              - key: application.properties
+                path: config/app.properties
+          
+          # Secret
+          - secret:
+              name: db-credentials
+              items:
+              - key: username
+                path: secrets/username
+              - key: password
+                path: secrets/password
+          
+          # Downward API
+          - downwardAPI:
+              items:
+              - path: "labels"
+                fieldRef:
+                  fieldPath: metadata.labels
+              - path: "annotations"
+                fieldRef:
+                  fieldPath: metadata.annotations
+          
+          # ServiceAccount Token
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 7200
+              audience: api
