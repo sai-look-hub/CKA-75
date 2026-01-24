@@ -1,9 +1,10 @@
 ****Day 12-13: Kubernetes Configuration Management****
 
-https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white
-https://img.shields.io/badge/CKA-Preparation-orange?style=for-the-badge
-https://img.shields.io/badge/Day-12--13-blue?style=for-the-badge
-https://img.shields.io/badge/Security-Focused-red?style=for-the-badge
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)
+![CKA Preparation](https://img.shields.io/badge/CKA-Preparation-orange?style=for-the-badge)
+![Day 12-13](https://img.shields.io/badge/Day-12--13-blue?style=for-the-badge)
+![Security Focused](https://img.shields.io/badge/Security-Focused-red?style=for-the-badge)
+
 
 **Part of the 75-Day CKA Preparation Journey
 **
