@@ -1,0 +1,980 @@
+################################################################################
+# COMPLETE 3-TIER APPLICATION - PRODUCTION DEPLOYMENT
+# Day 14-15: Week 1-2 Review & Mini Project
+################################################################################
+
+################################################################################
+# NAMESPACE
+################################################################################
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    name: production
+    environment: production
+  annotations:
+    description: "Production environment for 3-tier application"
+    owner: "platform-team@company.com"
+    criticality: "high"
+
+################################################################################
+# FRONTEND TIER - REACT + NGINX
+################################################################################
+
+---
+# Frontend ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: production
+data:
+  # Environment variables
+  REACT_APP_API_URL: "http://backend:8080"
+  REACT_APP_ENVIRONMENT: "production"
+  REACT_APP_VERSION: "2.1.0"
+  
+  # Nginx configuration
+  nginx.conf: |
+    events {
+      worker_connections 1024;
+    }
+    
+    http {
+      include /etc/nginx/mime.types;
+      default_type application/octet-stream;
+      
+      upstream backend {
+        server backend.production.svc.cluster.local:8080;
+      }
+      
+      server {
+        listen 3000;
+        server_name _;
+        
+        root /usr/share/nginx/html;
+        index index.html;
+        
+        # Frontend routes
+        location / {
+          try_files $uri $uri/ /index.html;
+        }
+        
+        # API proxy
+        location /api {
+          proxy_pass http://backend;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_connect_timeout 5s;
+          proxy_send_timeout 60s;
+          proxy_read_timeout 60s;
+        }
+        
+        # Health check endpoint
+        location /health {
+          access_log off;
+          return 200 "healthy\n";
+          add_header Content-Type text/plain;
+        }
+        
+        # Ready check endpoint
+        location /ready {
+          access_log off;
+          return 200 "ready\n";
+          add_header Content-Type text/plain;
+        }
+      }
+    }
+
+---
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: production
+  labels:
+    app.kubernetes.io/name: ecommerce
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/version: "2.1.0"
+    tier: frontend
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ecommerce
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ecommerce
+        app.kubernetes.io/component: frontend
+        app.kubernetes.io/version: "2.1.0"
+        tier: frontend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 3000
+          name: http
+          protocol: TCP
+        
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        
+        envFrom:
+        - configMapRef:
+            name: frontend-config
+        
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: cache
+          mountPath: /var/cache/nginx
+        - name: run
+          mountPath: /var/run
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 101
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+      
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: frontend-config
+      - name: cache
+        emptyDir: {}
+      - name: run
+        emptyDir: {}
+      
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                  - frontend
+              topologyKey: kubernetes.io/hostname
+
+---
+# Frontend Service (LoadBalancer)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: production
+  labels:
+    app.kubernetes.io/name: ecommerce
+    app.kubernetes.io/component: frontend
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: ecommerce
+    app.kubernetes.io/component: frontend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3000
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# Frontend HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 15
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 2
+        periodSeconds: 15
+      selectPolicy: Max
+
+################################################################################
+# BACKEND TIER - NODE.JS API
+################################################################################
+
+---
+# Backend ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: production
+data:
+  NODE_ENV: "production"
+  PORT: "8080"
+  LOG_LEVEL: "info"
+  
+  # Database configuration
+  DB_HOST: "postgres.production.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "ecommerce"
+  DB_POOL_MIN: "2"
+  DB_POOL_MAX: "10"
+  
+  # Redis configuration
+  REDIS_HOST: "redis.production.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  
+  # Application settings
+  RATE_LIMIT_MAX: "1000"
+  RATE_LIMIT_WINDOW_MS: "60000"
+  SESSION_TIMEOUT: "3600"
+  CORS_ORIGIN: "*"
+
+---
+# Backend Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-secret
+  namespace: production
+type: Opaque
+stringData:
+  DB_PASSWORD: "SuperSecureDbPassword123!"
+  JWT_SECRET: "MyJWTSecretKey789XYZ"
+  API_KEY: "sk_live_abcdef123456"
+  SMTP_PASSWORD: "EmailPassword999"
+
+---
+# Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: production
+  labels:
+    app.kubernetes.io/name: ecommerce
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/version: "2.1.0"
+    tier: backend
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ecommerce
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ecommerce
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/version: "2.1.0"
+        tier: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      initContainers:
+      - name: wait-for-db
+        image: busybox:latest
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z postgres.production.svc.cluster.local 5432; do
+            echo "Waiting for database..."
+            sleep 2
+          done
+          echo "Database is ready!"
+      
+      - name: db-migration
+        image: node:18-alpine
+        command: ['sh', '-c', 'echo "Migration would run here"']
+        envFrom:
+        - configMapRef:
+            name: backend-config
+        - secretRef:
+            name: backend-secret
+      
+      containers:
+      - name: api
+        image: hashicorp/http-echo:latest
+        args:
+        - "-text=Backend API v2.1.0 - Pod: $(POD_NAME)"
+        - "-listen=:8080"
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        
+        envFrom:
+        - configMapRef:
+            name: backend-config
+        - secretRef:
+            name: backend-secret
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+      
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                  - backend
+              topologyKey: kubernetes.io/hostname
+
+---
+# Backend Service (ClusterIP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: production
+  labels:
+    app.kubernetes.io/name: ecommerce
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ecommerce
+    app.kubernetes.io/component: backend
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  sessionAffinity: None
+
+---
+# Backend HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 5
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+################################################################################
+# DATABASE TIER - POSTGRESQL
+################################################################################
+
+---
+# PostgreSQL ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: production
+data:
+  POSTGRES_DB: "ecommerce"
+  PGDATA: "/var/lib/postgresql/data/pgdata"
+  
+  postgresql.conf: |
+    # Connection settings
+    max_connections = 200
+    superuser_reserved_connections = 3
+    
+    # Memory settings
+    shared_buffers = 256MB
+    effective_cache_size = 1GB
+    maintenance_work_mem = 64MB
+    work_mem = 8MB
+    
+    # WAL settings
+    wal_level = replica
+    max_wal_senders = 3
+    wal_keep_size = 1GB
+    
+    # Checkpoint settings
+    checkpoint_completion_target = 0.9
+    checkpoint_timeout = 10min
+    
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d.log'
+    log_rotation_age = 1d
+    log_rotation_size = 100MB
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_timezone = 'UTC'
+
+---
+# PostgreSQL Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: production
+type: Opaque
+stringData:
+  POSTGRES_USER: "ecommerce_user"
+  POSTGRES_PASSWORD: "SuperSecureDbPassword123!"
+  POSTGRES_REPLICATION_USER: "replicator"
+  POSTGRES_REPLICATION_PASSWORD: "ReplicationPassword456!"
+
+---
+# PostgreSQL Headless Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: production
+  labels:
+    app: postgres
+    tier: database
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+
+---
+# PostgreSQL StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: production
+  labels:
+    app: postgres
+    tier: database
+spec:
+  serviceName: postgres
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+          protocol: TCP
+        
+        envFrom:
+        - configMapRef:
+            name: postgres-config
+        - secretRef:
+            name: postgres-secret
+        
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $POSTGRES_USER
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $POSTGRES_USER
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+      
+      volumes:
+      - name: postgres-config
+        configMap:
+          name: postgres-config
+  
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Gi
+
+################################################################################
+# CACHE TIER - REDIS
+################################################################################
+
+---
+# Redis ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: production
+data:
+  redis.conf: |
+    # Network
+    bind 0.0.0.0
+    protected-mode yes
+    port 6379
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+    
+    # Memory
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+    
+    # Persistence
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+    
+    # Append only file
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    
+    # Logging
+    loglevel notice
+    logfile ""
+
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: production
+  labels:
+    app: redis
+    tier: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        tier: cache
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - redis-server
+        - /usr/local/etc/redis/redis.conf
+        ports:
+        - containerPort: 6379
+          name: redis
+          protocol: TCP
+        
+        volumeMounts:
+        - name: redis-config
+          mountPath: /usr/local/etc/redis
+        - name: redis-data
+          mountPath: /data
+        
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+        
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+        
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+      
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-config
+      - name: redis-data
+        emptyDir: {}
+
+---
+# Redis Service (ClusterIP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: production
+  labels:
+    app: redis
+    tier: cache
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+
+################################################################################
+# SECURITY - RBAC & NETWORK POLICIES
+################################################################################
+
+---
+# Service Account for application
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecommerce-app
+  namespace: production
+
+---
+# Role for application
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ecommerce-app-role
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ecommerce-app-rolebinding
+  namespace: production
+subjects:
+- kind: ServiceAccount
+  name: ecommerce-app
+  namespace: production
+roleRef:
+  kind: Role
+  name: ecommerce-app-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Network Policy - Deny all ingress by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+
+---
+# Network Policy - Allow frontend to backend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# Network Policy - Allow backend to database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-database
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# Network Policy - Allow backend to Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-redis
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      tier: cache
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 6379
+
+################################################################################
+# RESOURCE QUOTA & LIMIT RANGE
+################################################################################
+
+---
+# Resource Quota for production namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: production-quota
+  namespace: production
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: "40Gi"
+    limits.cpu: "40"
+    limits.memory: "80Gi"
+    pods: "100"
+    services: "20"
+    persistentvolumeclaims: "20"
+    requests.storage: "500Gi"
+
+---
+# Limit Range
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: production-limitrange
+  namespace: production
+spec:
+  limits:
+  - max:
+      cpu: "2"
+      memory: "4Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "250m"
+      memory: "256Mi"
+    type: Container
