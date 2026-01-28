@@ -1,0 +1,25 @@
+---
+# Pod Disruption Budget for MongoDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mongodb-pdb
+  namespace: database
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: mongodb
+
+---
+# Pod Disruption Budget for PostgreSQL
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-pdb
+  namespace: database
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: postgres
