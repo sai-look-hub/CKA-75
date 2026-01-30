@@ -1,0 +1,139 @@
+# ============================================
+# 5. DATA PIPELINE EXAMPLES
+# ============================================
+
+---
+# ETL Extract Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: etl-extract
+  labels:
+    pipeline: etl
+    stage: extract
+spec:
+  completions: 10
+  parallelism: 5
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        pipeline: etl
+        stage: extract
+    spec:
+      containers:
+      - name: extractor
+        image: etl-extractor:2.0
+        env:
+        - name: SOURCE_BUCKET
+          value: "s3://raw-data/"
+        - name: OUTPUT_TOPIC
+          value: "extracted-data"
+        - name: AWS_REGION
+          value: "us-east-1"
+        command:
+        - python
+        - extract.py
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+      restartPolicy: OnFailure
+
+---
+# ETL Transform Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: etl-transform
+  labels:
+    pipeline: etl
+    stage: transform
+spec:
+  completions: 10
+  parallelism: 3
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        pipeline: etl
+        stage: transform
+    spec:
+      containers:
+      - name: transformer
+        image: etl-transformer:2.0
+        env:
+        - name: INPUT_TOPIC
+          value: "extracted-data"
+        - name: OUTPUT_TOPIC
+          value: "transformed-data"
+        command:
+        - python
+        - transform.py
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+      restartPolicy: OnFailure
+
+---
+# ETL Load Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: etl-load
+  labels:
+    pipeline: etl
+    stage: load
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 2
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        pipeline: etl
+        stage: load
+    spec:
+      containers:
+      - name: loader
+        image: etl-loader:2.0
+        env:
+        - name: INPUT_TOPIC
+          value: "transformed-data"
+        - name: DB_HOST
+          value: "postgres.default.svc.cluster.local"
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        - name: DB_NAME
+          value: "analytics"
+        command:
+        - python
+        - load.py
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+      restartPolicy: OnFailure
+
