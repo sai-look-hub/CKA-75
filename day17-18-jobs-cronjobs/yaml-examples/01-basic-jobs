@@ -1,0 +1,100 @@
+# ============================================
+# 1. BASIC JOBS
+# ============================================
+
+---
+# Simple Job - Single Execution
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: simple-job
+  labels:
+    app: example
+spec:
+  template:
+    metadata:
+      labels:
+        app: example
+    spec:
+      containers:
+      - name: hello
+        image: busybox:1.34
+        command: ['sh', '-c', 'echo "Hello from Job!" && sleep 5']
+      restartPolicy: Never
+
+---
+# Job with Completions
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: completion-job
+spec:
+  completions: 5        # Run 5 successful pods
+  template:
+    spec:
+      containers:
+      - name: worker
+        image: busybox:1.34
+        command:
+        - sh
+        - -c
+        - |
+          echo "Processing task..."
+          sleep 3
+          echo "Task completed!"
+      restartPolicy: Never
+
+---
+# Parallel Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: parallel-job
+spec:
+  completions: 10       # Total completions
+  parallelism: 3        # 3 concurrent pods
+  template:
+    spec:
+      containers:
+      - name: worker
+        image: busybox:1.34
+        command:
+        - sh
+        - -c
+        - |
+          echo "Worker starting: $HOSTNAME"
+          sleep 5
+          echo "Worker finished: $HOSTNAME"
+      restartPolicy: Never
+
+---
+# Work Queue Pattern Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: work-queue-job
+spec:
+  parallelism: 5        # 5 workers
+  # No completions - runs until queue empty
+  template:
+    spec:
+      containers:
+      - name: worker
+        image: queue-processor:1.0
+        env:
+        - name: QUEUE_URL
+          value: "redis://queue-service:6379"
+        command:
+        - sh
+        - -c
+        - |
+          while true; do
+            TASK=$(redis-cli -h queue-service lpop tasks)
+            if [ -z "$TASK" ]; then
+              echo "Queue empty, exiting"
+              exit 0
+            fi
+            echo "Processing: $TASK"
+            sleep 2
+          done
+      restartPolicy: OnFailure
