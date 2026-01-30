@@ -1,0 +1,96 @@
+# ============================================
+# 3. BASIC CRONJOBS
+# ============================================
+
+---
+# Simple CronJob - Every Minute
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hello-cronjob
+spec:
+  schedule: "*/1 * * * *"       # Every minute
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: hello
+            image: busybox:1.34
+            command:
+            - sh
+            - -c
+            - date; echo "Hello from CronJob"
+          restartPolicy: OnFailure
+
+---
+# Hourly CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hourly-task
+spec:
+  schedule: "0 * * * *"         # Every hour
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: task
+            image: task-runner:1.0
+            command: ['./hourly-task.sh']
+          restartPolicy: OnFailure
+
+---
+# Daily CronJob at 2 AM
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-task
+spec:
+  schedule: "0 2 * * *"         # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: task
+            image: task-runner:1.0
+            command: ['./daily-task.sh']
+          restartPolicy: OnFailure
+
+---
+# Weekly CronJob (Sunday midnight)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weekly-task
+spec:
+  schedule: "0 0 * * 0"         # Sunday at midnight
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: task
+            image: task-runner:1.0
+            command: ['./weekly-task.sh']
+          restartPolicy: OnFailure
+
+---
+# Monthly CronJob (1st at midnight)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: monthly-task
+spec:
+  schedule: "0 0 1 * *"         # 1st of month at midnight
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: task
+            image: task-runner:1.0
+            command: ['./monthly-task.sh']
+          restartPolicy: OnFailure
