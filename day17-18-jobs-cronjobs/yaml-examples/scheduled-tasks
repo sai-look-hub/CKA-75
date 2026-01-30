@@ -1,0 +1,210 @@
+# ============================================
+# 6. SCHEDULED TASKS
+# ============================================
+
+---
+# Hourly Data Sync
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hourly-data-sync
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 24
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: sync
+            image: data-sync:1.0
+            env:
+            - name: SOURCE_DB
+              value: "source-db:5432"
+            - name: TARGET_DB
+              value: "target-db:5432"
+            command:
+            - sh
+            - -c
+            - |
+              echo "Starting sync at $(date)"
+              ./sync-data.sh
+              echo "Sync completed at $(date)"
+          restartPolicy: OnFailure
+
+---
+# Daily Backup at 2 AM
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-backup
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: backup-tool:1.5
+            env:
+            - name: BACKUP_RETENTION_DAYS
+              value: "30"
+            command:
+            - sh
+            - -c
+            - |
+              DATE=$(date +%Y%m%d)
+              ./backup.sh --date=$DATE
+              ./cleanup-old-backups.sh --keep-days=30
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backups
+          restartPolicy: OnFailure
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-pvc
+
+---
+# Weekly Report Generation
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weekly-report
+spec:
+  schedule: "0 9 * * 1"         # Monday at 9 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: report
+            image: report-generator:1.0
+            command:
+            - python
+            - generate_report.py
+            - --period=weekly
+            - --output=/reports/weekly-$(date +%Y%m%d).pdf
+            volumeMounts:
+            - name: reports
+              mountPath: /reports
+          restartPolicy: OnFailure
+          volumes:
+          - name: reports
+            persistentVolumeClaim:
+              claimName: reports-pvc
+
+---
+# Monthly Cleanup
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: monthly-cleanup
+spec:
+  schedule: "0 0 1 * *"         # 1st of month at midnight
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: cleanup
+            image: postgres:15
+            command:
+            - sh
+            - -c
+            - |
+              psql -h postgres -U admin -d mydb <<EOF
+              -- Delete old records
+              DELETE FROM logs WHERE created_at < NOW() - INTERVAL '90 days';
+              DELETE FROM temp_data WHERE created_at < NOW() - INTERVAL '30 days';
+              
+              -- Vacuum tables
+              VACUUM ANALYZE logs;
+              VACUUM ANALYZE temp_data;
+              
+              -- Report space freed
+              SELECT pg_size_pretty(pg_database_size('mydb')) as database_size;
+              EOF
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+          restartPolicy: OnFailure
+
+---
+# Health Check Every 5 Minutes
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: health-check
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Replace
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: health-check
+            image: curl:latest
+            command:
+            - sh
+            - -c
+            - |
+              ENDPOINTS="http://api:8080/health http://frontend:80/health"
+              for ENDPOINT in $ENDPOINTS; do
+                if curl -f $ENDPOINT; then
+                  echo "✓ $ENDPOINT is healthy"
+                else
+                  echo "✗ $ENDPOINT is unhealthy"
+                  exit 1
+                fi
+              done
+          restartPolicy: Never
+
+---
+# Certificate Renewal Check
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cert-renewal
+spec:
+  schedule: "0 0 * * *"         # Daily at midnight
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: cert-check
+            image: certbot:latest
+            command:
+            - sh
+            - -c
+            - |
+              certbot renew --dry-run
+              if [ $? -eq 0 ]; then
+                echo "Certificates are valid"
+              else
+                echo "Certificate renewal needed!"
+                certbot renew
+              fi
+            volumeMounts:
+            - name: letsencrypt
+              mountPath: /etc/letsencrypt
+          restartPolicy: OnFailure
+          volumes:
+          - name: letsencrypt
+            persistentVolumeClaim:
+              claimName: letsencrypt-pvc
+
