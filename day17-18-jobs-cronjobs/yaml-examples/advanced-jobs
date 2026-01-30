@@ -1,0 +1,187 @@
+# ============================================
+# 2. ADVANCED JOBS
+# ============================================
+
+---
+# Job with TTL (Auto-cleanup)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ttl-job
+spec:
+  ttlSecondsAfterFinished: 100    # Delete after 100 seconds
+  template:
+    spec:
+      containers:
+      - name: task
+        image: busybox:1.34
+        command: ['sh', '-c', 'echo "Job will be auto-deleted"']
+      restartPolicy: Never
+
+---
+# Job with Timeout
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: timeout-job
+spec:
+  activeDeadlineSeconds: 60     # Fail after 60 seconds
+  backoffLimit: 3
+  template:
+    spec:
+      containers:
+      - name: long-task
+        image: busybox:1.34
+        command:
+        - sh
+        - -c
+        - |
+          echo "Starting long task..."
+          sleep 120  # Will be killed at 60s
+      restartPolicy: OnFailure
+
+---
+# Job with Retries
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: retry-job
+spec:
+  backoffLimit: 4         # Retry up to 4 times
+  template:
+    spec:
+      containers:
+      - name: flaky-task
+        image: busybox:1.34
+        command:
+        - sh
+        - -c
+        - |
+          if [ $(( RANDOM % 2 )) -eq 0 ]; then
+            echo "Success!"
+            exit 0
+          else
+            echo "Failed!"
+            exit 1
+          fi
+      restartPolicy: Never
+
+---
+# Indexed Job (Kubernetes 1.24+)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: indexed-job
+spec:
+  completions: 5
+  parallelism: 3
+  completionMode: Indexed
+  template:
+    spec:
+      containers:
+      - name: worker
+        image: busybox:1.34
+        command:
+        - sh
+        - -c
+        - |
+          INDEX=${JOB_COMPLETION_INDEX}
+          echo "Processing item $INDEX"
+          sleep 2
+          echo "Completed item $INDEX"
+      restartPolicy: Never
+
+---
+# Job with Resource Limits
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: resource-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: processor
+        image: data-processor:1.0
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+        command: ['./process-data.sh']
+      restartPolicy: OnFailure
+
+---
+# Job with ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-config
+data:
+  config.json: |
+    {
+      "batch_size": 1000,
+      "timeout": 300,
+      "retries": 3
+    }
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: configmap-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: processor
+        image: processor:1.0
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        command:
+        - ./process.sh
+        - --config=/config/config.json
+      restartPolicy: Never
+      volumes:
+      - name: config
+        configMap:
+          name: job-config
+
+---
+# Job with Secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: job-secret
+type: Opaque
+stringData:
+  api-key: "super-secret-api-key"
+  db-password: "database-password"
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: secret-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: secure-task
+        image: secure-app:1.0
+        env:
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: job-secret
+              key: api-key
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: job-secret
+              key: db-password
+        command: ['./run-task.sh']
+      restartPolicy: OnFailure
