@@ -1,0 +1,123 @@
+# ============================================
+# 4. ADVANCED CRONJOBS
+# ============================================
+
+---
+# CronJob with Concurrency Policy: Forbid
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-db
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid     # Don't run if previous still running
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: postgres:15
+            command:
+            - sh
+            - -c
+            - |
+              BACKUP_FILE="/backups/backup-$(date +%Y%m%d-%H%M%S).sql"
+              pg_dump -h $DB_HOST -U postgres mydb > $BACKUP_FILE
+              gzip $BACKUP_FILE
+              echo "Backup completed: $BACKUP_FILE.gz"
+            env:
+            - name: DB_HOST
+              value: "postgres.default.svc.cluster.local"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+            volumeMounts:
+            - name: backups
+              mountPath: /backups
+          restartPolicy: OnFailure
+          volumes:
+          - name: backups
+            persistentVolumeClaim:
+              claimName: backup-pvc
+
+---
+# CronJob with Concurrency Policy: Replace
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: status-check
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Replace    # Cancel old, start new
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: check
+            image: status-checker:1.0
+            command: ['./check-status.sh']
+          restartPolicy: OnFailure
+
+---
+# Suspended CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: maintenance-job
+spec:
+  schedule: "0 3 * * *"
+  suspend: true                 # Temporarily disabled
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: maintenance
+            image: maintenance:1.0
+            command: ['./maintenance.sh']
+          restartPolicy: OnFailure
+
+---
+# CronJob with Starting Deadline
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: time-sensitive-job
+spec:
+  schedule: "0 9 * * *"
+  startingDeadlineSeconds: 300  # Must start within 5 minutes
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: task
+            image: time-sensitive:1.0
+            command: ['./run.sh']
+          restartPolicy: OnFailure
+
+---
+# CronJob with History Limits
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup-job
+spec:
+  schedule: "0 1 * * *"
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: cleanup
+            image: cleanup:1.0
+            command: ['./cleanup.sh']
+          restartPolicy: OnFailure
