@@ -1,0 +1,73 @@
+# ============================================
+# 7. DATABASE MAINTENANCE JOBS
+# ============================================
+
+---
+# Database Migration Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migration-v2
+spec:
+  backoffLimit: 0               # No retries for migrations
+  activeDeadlineSeconds: 600
+  template:
+    spec:
+      serviceAccountName: migration-sa
+      containers:
+      - name: migrate
+        image: flyway:9.0
+        command:
+        - flyway
+        - migrate
+        env:
+        - name: FLYWAY_URL
+          value: "jdbc:postgresql://postgres:5432/mydb"
+        - name: FLYWAY_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: username
+        - name: FLYWAY_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        - name: FLYWAY_LOCATIONS
+          value: "filesystem:/flyway/sql"
+        volumeMounts:
+        - name: migrations
+          mountPath: /flyway/sql
+      restartPolicy: Never
+      volumes:
+      - name: migrations
+        configMap:
+          name: db-migrations
+
+---
+# Database Vacuum Job
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-vacuum
+spec:
+  schedule: "0 3 * * 0"         # Sunday at 3 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: vacuum
+            image: postgres:15
+            command:
+            - sh
+            - -c
+            - |
+              psql -h postgres -U admin -d mydb -c "VACUUM FULL ANALYZE;"
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+          restartPolicy: OnFailure
