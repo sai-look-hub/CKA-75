@@ -1,0 +1,10 @@
+bash# Delete all examples
+kubectl delete -f examples/01-nodename/ --ignore-not-found=true
+kubectl delete -f examples/02-nodeselector/ --ignore-not-found=true
+kubectl delete -f examples/03-node-affinity/ --ignore-not-found=true
+kubectl delete -f examples/04-anti-affinity/ --ignore-not-found=true
+kubectl delete -f examples/05-real-world/ --ignore-not-found=true
+kubectl delete -f examples/06-advanced/ --ignore-not-found=true
+
+# Remove labels
+./examples/02-nodeselector/cleanup-labels.sh
