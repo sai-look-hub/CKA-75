@@ -456,7 +456,7 @@ After completing this module:
 2. ✅ Optimize hardware utilization
 3. ✅ Build fault-tolerant architectures
 4. ✅ Practice scheduling scenarios
-5. ✅ Move to **Day 23-24: RBAC & Security**
+5. ✅ Move to **Day 23-24 - Resource Limits & Requests**
 
 ## 📞 Support & Feedback
 
