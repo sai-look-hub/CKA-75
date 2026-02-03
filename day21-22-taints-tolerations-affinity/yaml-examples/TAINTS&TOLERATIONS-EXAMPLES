@@ -1,0 +1,123 @@
+# ============================================
+# 1. TAINTS & TOLERATIONS EXAMPLES
+# ============================================
+
+---
+# Basic Toleration - NoSchedule
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-toleration
+spec:
+  tolerations:
+  - key: "dedicated"
+    operator: "Equal"
+    value: "frontend"
+    effect: "NoSchedule"
+  containers:
+  - name: nginx
+    image: nginx:1.21
+
+---
+# Toleration with Exists Operator
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-pod
+spec:
+  tolerations:
+  - key: "gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+  containers:
+  - name: ml-app
+    image: tensorflow:latest
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+
+---
+# NoExecute Toleration with TolerationSeconds
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resilient-pod
+spec:
+  tolerations:
+  - key: "node.kubernetes.io/not-ready"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 300
+  - key: "node.kubernetes.io/unreachable"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 300
+  containers:
+  - name: app
+    image: myapp:1.0
+
+---
+# Multiple Tolerations
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multi-toleration-pod
+spec:
+  tolerations:
+  - key: "gpu"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  - key: "ssd"
+    operator: "Exists"
+    effect: "NoSchedule"
+  - key: "dedicated"
+    operator: "Equal"
+    value: "ml"
+    effect: "PreferNoSchedule"
+  containers:
+  - name: ml-workload
+    image: ml-trainer:2.0
+
+---
+# DaemonSet with Master Node Toleration
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:v1.6.1
+        ports:
+        - containerPort: 9100
+          hostPort: 9100
+
+---
+# Tolerate All Taints (System Pod)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: system-pod
+spec:
+  tolerations:
+  - operator: "Exists"
+  containers:
+  - name: monitoring
+    image: monitoring:1.0
