@@ -1,0 +1,153 @@
+# ============================================
+# 2. NODE AFFINITY EXAMPLES
+# ============================================
+
+---
+# Required Node Affinity - SSD
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: disk-type
+                operator: In
+                values:
+                - ssd
+      containers:
+      - name: postgres
+        image: postgres:15
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+
+---
+# Preferred Node Affinity - Zone
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80
+            preference:
+              matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values:
+                - us-east-1a
+          - weight: 20
+            preference:
+              matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values:
+                - us-east-1b
+      containers:
+      - name: web
+        image: nginx:1.21
+
+---
+# Multiple Node Requirements
+apiVersion: v1
+kind: Pod
+metadata:
+  name: specific-requirements
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/os
+            operator: In
+            values:
+            - linux
+          - key: node-type
+            operator: In
+            values:
+            - compute-optimized
+          - key: instance-lifecycle
+            operator: NotIn
+            values:
+            - spot
+  containers:
+  - name: app
+    image: myapp:1.0
+
+---
+# GPU Node Affinity
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ml-training
+spec:
+  template:
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: accelerator
+                operator: In
+                values:
+                - gpu
+                - nvidia-tesla-v100
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: trainer
+        image: ml-trainer:2.0
+        resources:
+          limits:
+            nvidia.com/gpu: 2
+      restartPolicy: Never
+
+---
+# Exists and DoesNotExist Operators
+apiVersion: v1
+kind: Pod
+metadata:
+  name: conditional-scheduling
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          # Must have GPU
+          - key: gpu
+            operator: Exists
+          # Must NOT be spot instance
+          - key: spot-instance
+            operator: DoesNotExist
+  containers:
+  - name: app
+    image: gpu-app:1.0
