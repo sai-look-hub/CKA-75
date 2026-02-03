@@ -1,0 +1,183 @@
+02-nodeselector - Label-Based Scheduling
+pod-nodeselector.yaml
+Purpose: Schedule pod on nodes with specific labels (GPU example)
+File: examples/02-nodeselector/pod-nodeselector.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-pod
+  labels:
+    app: ml-training
+    method: nodeselector
+spec:
+  nodeSelector:
+    hardware: gpu  # Only schedule on nodes with GPU
+  containers:
+  - name: tensorflow
+    image: tensorflow/tensorflow:latest-gpu
+    command: ["python"]
+    args: ["-c", "import tensorflow as tf; print('TensorFlow version:', tf.__version__); print('GPU available:', tf.config.list_physical_devices('GPU'))"]
+    resources:
+      requests:
+        cpu: "1000m"
+        memory: "2Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+        nvidia.com/gpu: 1  # Request 1 GPU
+Usage:
+bash# First label a node with GPU
+kubectl label node worker-node-1 hardware=gpu
+
+# Apply the pod
+kubectl apply -f examples/02-nodeselector/pod-nodeselector.yaml
+kubectl get pod gpu-pod -o wide
+Expected Result: Pod scheduled on node with hardware=gpu label
+
+pod-multi-selector.yaml
+Purpose: Multiple nodeSelector labels (AND logic)
+File: examples/02-nodeselector/pod-multi-selector.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: ssd-high-mem-pod
+  labels:
+    app: database
+    method: nodeselector-multi
+spec:
+  nodeSelector:
+    disktype: ssd    # AND - must have SSD
+    memory: high     # AND - must have high memory
+  containers:
+  - name: postgres
+    image: postgres:15
+    env:
+    - name: POSTGRES_PASSWORD
+      value: "mysecretpassword"
+    - name: POSTGRES_DB
+      value: "production_db"
+    ports:
+    - containerPort: 5432
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+    volumeMounts:
+    - name: postgres-storage
+      mountPath: /var/lib/postgresql/data
+  volumes:
+  - name: postgres-storage
+    emptyDir: {}
+Usage:
+bash# Label node with both labels
+kubectl label node worker-node-1 disktype=ssd memory=high
+
+# Apply pod
+kubectl apply -f examples/02-nodeselector/pod-multi-selector.yaml
+kubectl get pod ssd-high-mem-pod -o wide
+Expected Result: Pod on node with BOTH disktype=ssd AND memory=high
+
+pod-unmatched.yaml
+Purpose: Demonstrates pod pending when no nodes match selector
+File: examples/02-nodeselector/pod-unmatched.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: nonexistent-label-pod
+  labels:
+    app: test
+    method: nodeselector-unmatched
+spec:
+  nodeSelector:
+    special-hardware: quantum-computer  # This label doesn't exist on any node
+  containers:
+  - name: nginx
+    image: nginx:1.24
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+
+# This pod will remain in Pending state because no node has the required label
+# Expected error: "0/N nodes are available: N node(s) didn't match Pod's node affinity/selector"
+Usage:
+bashkubectl apply -f examples/02-nodeselector/pod-unmatched.yaml
+kubectl get pod nonexistent-label-pod
+kubectl describe pod nonexistent-label-pod | grep -A 5 Events
+Expected Result: Pod stuck Pending with error message
+
+deployment-nodeselector.yaml
+Purpose: Production deployment with nodeSelector and service
+File: examples/02-nodeselector/deployment-nodeselector.yaml
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: production-app
+  labels:
+    app: production-app
+    environment: production
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: production-app
+  template:
+    metadata:
+      labels:
+        app: production-app
+        environment: production
+    spec:
+      nodeSelector:
+        environment: production  # Only schedule on production nodes
+      containers:
+      - name: app
+        image: nginx:1.24
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: production-app-service
+spec:
+  selector:
+    app: production-app
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+Usage:
+bash# Label production nodes
+kubectl label node worker-node-1 environment=production
+
+# Apply deployment
+kubectl apply -f examples/02-nodeselector/deployment-nodeselector.yaml
+kubectl get pods -l app=production-app -o wide
+Expected Result: All 5 replicas on nodes labeled environment=production
