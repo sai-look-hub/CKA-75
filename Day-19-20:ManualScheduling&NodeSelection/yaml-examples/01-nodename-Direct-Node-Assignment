@@ -1,0 +1,108 @@
+pod-nodename.yaml
+Purpose: Direct pod assignment to a specific node (bypasses scheduler)
+File: examples/01-nodename/pod-nodename.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-nodename
+  labels:
+    app: nginx
+    method: nodename
+spec:
+  nodeName: worker-node-1  # Direct node assignment - bypasses scheduler
+  containers:
+  - name: nginx
+    image: nginx:1.24
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+Usage:
+bashkubectl apply -f examples/01-nodename/pod-nodename.yaml
+kubectl get pod nginx-nodename -o wide
+Expected Result: Pod scheduled on worker-node-1
+
+pod-nodename-invalid.yaml
+Purpose: Demonstrates what happens when nodeName references non-existent node
+File: examples/01-nodename/pod-nodename-invalid.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-invalid
+  labels:
+    app: nginx
+    method: nodename-invalid
+spec:
+  nodeName: non-existent-node  # This node doesn't exist - pod will be stuck
+  containers:
+  - name: nginx
+    image: nginx:1.24
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+Usage:
+bashkubectl apply -f examples/01-nodename/pod-nodename-invalid.yaml
+kubectl get pod nginx-invalid
+kubectl describe pod nginx-invalid | grep -A 5 Events
+Expected Result: Pod stuck in Pending state
+
+deployment-nodename.yaml
+Purpose: Shows why nodeName is bad for deployments (all replicas on same node)
+File: examples/01-nodename/deployment-nodename.yaml
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-nodename-deploy
+  labels:
+    app: nginx-deploy
+    method: nodename
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-deploy
+  template:
+    metadata:
+      labels:
+        app: nginx-deploy
+    spec:
+      nodeName: worker-node-1  # All replicas on same node - BAD practice!
+      containers:
+      - name: nginx
+        image: nginx:1.24
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 3
+Usage:
+bashkubectl apply -f examples/01-nodename/deployment-nodename.yaml
+kubectl get pods -l app=nginx-deploy -o wide
+Expected Result: All 3 replicas on worker-node-1 (single point of failure!)
