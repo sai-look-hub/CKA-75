@@ -1,0 +1,454 @@
+# Taints, Tolerations & Affinity - Commands Cheatsheet
+
+## 📋 Quick Reference Guide
+
+---
+
+## Taint Commands
+
+### Add Taints
+
+```bash
+# Basic taint
+kubectl taint nodes <node-name> key=value:NoSchedule
+
+# Taint with just key (no value)
+kubectl taint nodes <node-name> dedicated:NoSchedule
+
+# NoExecute effect (evicts pods)
+kubectl taint nodes <node-name> status=unhealthy:NoExecute
+
+# PreferNoSchedule (soft)
+kubectl taint nodes <node-name> workload=batch:PreferNoSchedule
+
+# Multiple taints
+kubectl taint nodes <node-name> gpu=true:NoSchedule
+kubectl taint nodes <node-name> ssd=true:NoSchedule
+```
+
+### Remove Taints
+
+```bash
+# Remove specific taint
+kubectl taint nodes <node-name> key:NoSchedule-
+
+# Remove taint with value
+kubectl taint nodes <node-name> key=value:NoSchedule-
+
+# Remove all taints with key
+kubectl taint nodes <node-name> key-
+```
+
+### View Taints
+
+```bash
+# Describe node
+kubectl describe node <node-name> | grep Taints
+
+# Get all node taints
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+
+# Get taints in JSON
+kubectl get node <node-name> -o jsonpath='{.spec.taints}'
+
+# List nodes with specific taint
+kubectl get nodes -o json | jq -r '.items[] | select(.spec.taints[]?.key=="gpu") | .metadata.name'
+```
+
+### Common Taint Patterns
+
+```bash
+# Master/Control Plane isolation
+kubectl taint nodes master-1 node-role.kubernetes.io/master:NoSchedule
+kubectl taint nodes master-1 node-role.kubernetes.io/control-plane:NoSchedule
+
+# GPU nodes
+kubectl taint nodes gpu-node nvidia.com/gpu=true:NoSchedule
+
+# Dedicated nodes
+kubectl taint nodes worker-1 dedicated=frontend:NoSchedule
+
+# Maintenance mode
+kubectl taint nodes worker-2 maintenance=true:NoExecute
+
+# Remove master taint (allow scheduling)
+kubectl taint nodes master-1 node-role.kubernetes.io/master:NoSchedule-
+```
+
+---
+
+## Node Label Commands
+
+### Add Labels
+
+```bash
+# Add single label
+kubectl label nodes <node-name> key=value
+
+# Add multiple labels
+kubectl label nodes <node-name> disk-type=ssd gpu=true zone=us-east-1a
+
+# Overwrite existing label
+kubectl label nodes <node-name> disk-type=nvme --overwrite
+```
+
+### Remove Labels
+
+```bash
+# Remove label
+kubectl label nodes <node-name> key-
+
+# Remove multiple labels
+kubectl label nodes <node-name> disk-type- gpu- zone-
+```
+
+### View Labels
+
+```bash
+# Show all labels
+kubectl get nodes --show-labels
+
+# Get specific label
+kubectl get nodes -o jsonpath='{.items[*].metadata.labels.disk-type}'
+
+# List nodes with label
+kubectl get nodes -l disk-type=ssd
+
+# List nodes without label
+kubectl get nodes -l '!gpu'
+
+# Custom columns
+kubectl get nodes -o custom-columns=NAME:.metadata.name,LABELS:.metadata.labels
+```
+
+### Common Label Patterns
+
+```bash
+# Hardware labels
+kubectl label nodes worker-1 disk-type=ssd
+kubectl label nodes worker-2 disk-type=hdd
+kubectl label nodes gpu-node accelerator=nvidia-v100
+
+# Topology labels (usually auto-applied)
+kubectl label nodes worker-1 topology.kubernetes.io/zone=us-east-1a
+kubectl label nodes worker-1 topology.kubernetes.io/region=us-east-1
+
+# Environment labels
+kubectl label nodes worker-1 environment=production
+kubectl label nodes worker-2 environment=development
+
+# Custom labels
+kubectl label nodes worker-1 team=platform rack=rack-1
+```
+
+---
+
+## Pod Scheduling Commands
+
+### Check Pod Placement
+
+```bash
+# List pods with node info
+kubectl get pods -o wide
+
+# Get pods on specific node
+kubectl get pods --field-selector spec.nodeName=<node-name>
+
+# Get all pods with labels
+kubectl get pods -l app=web -o wide
+
+# Show pod node assignment
+kubectl get pods -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,STATUS:.status.phase
+```
+
+### Debug Scheduling Issues
+
+```bash
+# Describe pod (check events)
+kubectl describe pod <pod-name>
+
+# Get scheduling events
+kubectl get events --field-selector involvedObject.name=<pod-name>
+
+# Check why pod is pending
+kubectl describe pod <pod-name> | grep -A 10 Events
+
+# Get scheduler logs
+kubectl logs -n kube-system -l component=kube-scheduler
+
+# Check node conditions
+kubectl describe node <node-name> | grep -A 5 Conditions
+```
+
+### Force Reschedule
+
+```bash
+# Delete pod (will be recreated by controller)
+kubectl delete pod <pod-name>
+
+# Restart deployment (rolling restart)
+kubectl rollout restart deployment/<deployment-name>
+
+# Drain node (evict pods)
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+
+# Cordon node (prevent new pods)
+kubectl cordon <node-name>
+
+# Uncordon node (allow scheduling)
+kubectl uncordon <node-name>
+```
+
+---
+
+## Affinity Testing
+
+### Test Node Affinity
+
+```bash
+# Create test pod with node affinity
+kubectl run test-affinity --image=nginx --dry-run=client -o yaml > test.yaml
+# Edit test.yaml to add affinity
+kubectl apply -f test.yaml
+
+# Check if pod scheduled
+kubectl get pod test-affinity -o wide
+
+# If pending, check why
+kubectl describe pod test-affinity | grep -A 10 Events
+```
+
+### Test Pod Anti-Affinity
+
+```bash
+# Create deployment with anti-affinity
+kubectl create deployment test-ha --image=nginx --replicas=3 --dry-run=client -o yaml > ha-test.yaml
+# Edit ha-test.yaml to add anti-affinity
+kubectl apply -f ha-test.yaml
+
+# Check pod distribution
+kubectl get pods -l app=test-ha -o wide
+
+# Count pods per node
+kubectl get pods -l app=test-ha -o wide | awk '{print $7}' | sort | uniq -c
+```
+
+### Verify Topology Spread
+
+```bash
+# Get pod distribution across zones
+kubectl get pods -l app=myapp -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,ZONE:.metadata.labels['topology\.kubernetes\.io/zone']
+
+# Count pods per zone
+kubectl get pods -l app=myapp -o json | jq -r '.items[] | .metadata.labels["topology.kubernetes.io/zone"]' | sort | uniq -c
+```
+
+---
+
+## Node Management
+
+### Node Information
+
+```bash
+# List all nodes
+kubectl get nodes
+
+# Get node details
+kubectl describe node <node-name>
+
+# Get node capacity
+kubectl describe node <node-name> | grep -A 5 Capacity
+
+# Get node allocatable resources
+kubectl describe node <node-name> | grep -A 5 Allocatable
+
+# Check node resource usage
+kubectl top nodes
+
+# Get node conditions
+kubectl get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,REASON:.status.conditions[-1].reason
+```
+
+### Node Maintenance
+
+```bash
+# Mark node unschedulable
+kubectl cordon <node-name>
+
+# Drain node (evict pods gracefully)
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+
+# Drain with grace period
+kubectl drain <node-name> --grace-period=300 --ignore-daemonsets
+
+# Drain specific pod
+kubectl drain <node-name> --pod-selector=app=myapp
+
+# Mark node schedulable again
+kubectl uncordon <node-name>
+```
+
+---
+
+## Useful One-Liners
+
+### Taint Operations
+
+```bash
+# Find all tainted nodes
+kubectl get nodes -o json | jq -r '.items[] | select(.spec.taints != null) | .metadata.name'
+
+# List all unique taints in cluster
+kubectl get nodes -o json | jq -r '.items[].spec.taints[]? | "\(.key)=\(.value):\(.effect)"' | sort -u
+
+# Count nodes per taint
+kubectl get nodes -o json | jq -r '.items[].spec.taints[]? | .key' | sort | uniq -c
+```
+
+### Node Label Operations
+
+```bash
+# Find nodes with SSD
+kubectl get nodes -l disk-type=ssd
+
+# Find GPU nodes
+kubectl get nodes -l accelerator
+
+# List nodes in specific zone
+kubectl get nodes -l topology.kubernetes.io/zone=us-east-1a
+
+# Count nodes per zone
+kubectl get nodes -o json | jq -r '.items[] | .metadata.labels["topology.kubernetes.io/zone"]' | sort | uniq -c
+```
+
+### Pod Distribution
+
+```bash
+# Count pods per node
+kubectl get pods -A -o wide | awk '{print $8}' | sort | uniq -c
+
+# Find pods on specific node
+kubectl get pods --all-namespaces --field-selector spec.nodeName=<node-name>
+
+# List pending pods
+kubectl get pods --field-selector status.phase=Pending
+
+# Get pod scheduling failures
+kubectl get events --all-namespaces | grep FailedScheduling
+```
+
+---
+
+## Quick Scenarios
+
+### Scenario 1: Dedicate Node for ML Workloads
+
+```bash
+# 1. Label node
+kubectl label nodes worker-3 workload=ml
+
+# 2. Taint node
+kubectl taint nodes worker-3 workload=ml:NoSchedule
+
+# 3. Verify
+kubectl describe node worker-3 | grep -E 'Labels|Taints'
+
+# 4. Deploy ML pod with toleration (see YAML examples)
+```
+
+### Scenario 2: Spread Pods for HA
+
+```bash
+# 1. Label nodes with zones
+kubectl label nodes worker-1 topology.kubernetes.io/zone=zone-a
+kubectl label nodes worker-2 topology.kubernetes.io/zone=zone-b
+kubectl label nodes worker-3 topology.kubernetes.io/zone=zone-c
+
+# 2. Deploy with anti-affinity (see YAML examples)
+
+# 3. Verify distribution
+kubectl get pods -l app=myapp -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName,ZONE:.spec.nodeSelector
+```
+
+### Scenario 3: Node Maintenance
+
+```bash
+# 1. Cordon node
+kubectl cordon worker-2
+
+# 2. Drain node
+kubectl drain worker-2 --ignore-daemonsets --delete-emptydir-data
+
+# 3. Perform maintenance
+# ... (update OS, hardware, etc.)
+
+# 4. Uncordon node
+kubectl uncordon worker-2
+
+# 5. Verify
+kubectl get nodes
+```
+
+---
+
+## Debugging Commands
+
+### Why is Pod Pending?
+
+```bash
+# Get detailed pod info
+kubectl describe pod <pod-name>
+
+# Check events
+kubectl get events --sort-by='.lastTimestamp' | grep <pod-name>
+
+# Check if node affinity matches
+kubectl get nodes -l <your-label>=<value>
+
+# Check if nodes are tainted
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+
+# Check resource availability
+kubectl describe nodes | grep -A 5 "Allocated resources"
+```
+
+### Why is Pod Not on Expected Node?
+
+```bash
+# Check pod spec
+kubectl get pod <pod-name> -o yaml | grep -A 20 affinity
+
+# Check node labels
+kubectl get nodes --show-labels
+
+# Check if preferred affinity (may not be honored)
+kubectl get pod <pod-name> -o jsonpath='{.spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution}'
+
+# Force reschedule
+kubectl delete pod <pod-name>
+```
+
+---
+
+## Aliases (Add to ~/.bashrc or ~/.zshrc)
+
+```bash
+alias k='kubectl'
+alias kgn='kubectl get nodes'
+alias kgnl='kubectl get nodes --show-labels'
+alias kgp='kubectl get pods -o wide'
+alias kdp='kubectl describe pod'
+alias kdn='kubectl describe node'
+alias ktaint='kubectl taint nodes'
+alias klabel='kubectl label nodes'
+```
+
+---
+
+**Pro Tip**: Use `kubectl explain` to understand resource fields:
+```bash
+kubectl explain pod.spec.affinity
+kubectl explain pod.spec.tolerations
+kubectl explain pod.spec.affinity.nodeAffinity
+kubectl explain pod.spec.affinity.podAntiAffinity
+```
