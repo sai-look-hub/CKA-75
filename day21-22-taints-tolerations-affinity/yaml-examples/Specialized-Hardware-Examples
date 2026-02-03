@@ -1,0 +1,81 @@
+# ============================================
+# 8. SPECIALIZED HARDWARE EXAMPLES
+# ============================================
+
+---
+# GPU Workload with Taints and Affinity
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ml-training-job
+spec:
+  template:
+    spec:
+      # Tolerate GPU taint
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      
+      # Require GPU node
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: accelerator
+                operator: In
+                values:
+                - nvidia-tesla-v100
+                - nvidia-tesla-a100
+      
+      containers:
+      - name: ml-trainer
+        image: tensorflow/tensorflow:latest-gpu
+        command: ["python", "train.py"]
+        resources:
+          limits:
+            nvidia.com/gpu: 2
+            memory: "16Gi"
+            cpu: "4"
+      
+      restartPolicy: Never
+  backoffLimit: 3
+
+---
+# Monitoring DaemonSet - Runs Everywhere
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: monitoring-agent
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring
+    spec:
+      # Tolerate all taints
+      tolerations:
+      - operator: Exists
+      
+      hostNetwork: true
+      hostPID: true
+      
+      containers:
+      - name: agent
+        image: monitoring-agent:1.0
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: root
+          mountPath: /host
+          readOnly: true
+      
+      volumes:
+      - name: root
+        hostPath:
+          path: /
