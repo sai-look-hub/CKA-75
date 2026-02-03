@@ -1,0 +1,65 @@
+# ============================================
+# 6. TOPOLOGY SPREAD CONSTRAINTS
+# ============================================
+
+---
+# Even Distribution Across Nodes
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evenly-spread
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: spread-app
+  template:
+    metadata:
+      labels:
+        app: spread-app
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: spread-app
+      containers:
+      - name: app
+        image: nginx:1.21
+
+---
+# Multi-Level Topology Spread
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-level-spread
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: multi-spread
+  template:
+    metadata:
+      labels:
+        app: multi-spread
+    spec:
+      topologySpreadConstraints:
+      # Spread across zones
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: multi-spread
+      # Spread across nodes within zones
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: multi-spread
+      containers:
+      - name: app
+        image: app:1.0
