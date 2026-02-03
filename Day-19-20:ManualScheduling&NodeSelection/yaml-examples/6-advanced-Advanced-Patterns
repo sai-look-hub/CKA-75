@@ -1,0 +1,246 @@
+combined-constraints.yaml
+Purpose: Combine all scheduling constraints
+File: examples/06-advanced/combined-constraints.yaml
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: advanced-scheduling
+  labels:
+    app: advanced-demo
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: advanced-demo
+  template:
+    metadata:
+      labels:
+        app: advanced-demo
+    spec:
+      # Node Affinity: Must run in specific regions
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: region
+                operator: In
+                values:
+                - us-west
+                - us-east
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80
+            preference:
+              matchExpressions:
+              - key: disktype
+                operator: In
+                values:
+                - ssd
+          - weight: 20
+            preference:
+              matchExpressions:
+              - key: memory
+                operator: In
+                values:
+                - high
+        
+        # Pod Anti-Affinity: Spread across nodes and zones
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: advanced-demo
+            topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: advanced-demo
+              topologyKey: topology.kubernetes.io/zone
+      
+      # Topology Spread: Even distribution
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: advanced-demo
+      
+      containers:
+      - name: app
+        image: nginx:1.24
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+Usage:
+bashkubectl apply -f examples/06-advanced/combined-constraints.yaml
+kubectl get pods -l app=advanced-demo -o wide
+Expected Result: Perfectly distributed pods with all constraints
+
+topology-spread.yaml
+Purpose: Even pod distribution using topology spread constraints
+File: examples/06-advanced/topology-spread.yaml
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evenly-distributed-app
+spec:
+  replicas: 12
+  selector:
+    matchLabels:
+      app: even-spread
+  template:
+    metadata:
+      labels:
+        app: even-spread
+    spec:
+      topologySpreadConstraints:
+      # Spread across zones (max difference of 1 pod)
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: even-spread
+      
+      # Spread across nodes (max difference of 2 pods, more flexible)
+      - maxSkew: 2
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: even-spread
+      
+      containers:
+      - name: app
+        image: nginx:1.24
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+Usage:
+bash# Label nodes with zones
+kubectl label node worker-node-1 topology.kubernetes.io/zone=zone-a
+kubectl label node worker-node-2 topology.kubernetes.io/zone=zone-b
+kubectl label node worker-node-3 topology.kubernetes.io/zone=zone-c
+
+# Apply deployment
+kubectl apply -f examples/06-advanced/topology-spread.yaml
+kubectl get pods -l app=even-spread -o wide
+
+# Count pods per zone
+kubectl get pods -l app=even-spread -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' | sort | uniq -c
+Expected Result: Evenly distributed pods (4 per zone)
+
+pod-priority.yaml
+Purpose: Pod priority and preemption
+File: examples/06-advanced/pod-priority.yaml
+yaml# Priority Class for critical workloads
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 1000000
+globalDefault: false
+description: "High priority for critical workloads"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: medium-priority
+value: 500000
+globalDefault: false
+description: "Medium priority for standard workloads"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority
+value: 100000
+globalDefault: true
+description: "Low priority for batch jobs"
+---
+# Critical application with high priority and specific node requirements
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: critical-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: critical-api
+  template:
+    metadata:
+      labels:
+        app: critical-api
+    spec:
+      priorityClassName: high-priority
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: environment
+                operator: In
+                values:
+                - production
+      containers:
+      - name: api
+        image: nginx:1.24  # Replace with your API image
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+---
+# Batch job with low priority - can be preempted
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-processing
+spec:
+  template:
+    spec:
+      priorityClassName: low-priority
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: instance-type
+                operator: In
+                values:
+                - spot
+      containers:
+      - name: processor
+        image: busybox
+        command: ["sh", "-c", "echo Processing data; sleep 3600"]
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "2Gi"
+      restartPolicy: Never
+  backoffLimit: 4
+Usage:
+bash# Apply priority classes and workloads
+kubectl apply -f examples/06-advanced/pod-priority.yaml
+
+# Check priority classes
+kubectl get priorityclasses
+
+# Check pods
+kubectl get pods -o custom-columns=NAME:.metadata.name,PRIORITY:.spec.priorityClassName,STATUS:.status.phase
+Expected Result: High priority pods scheduled first, can preempt low priority
