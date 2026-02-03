@@ -1,0 +1,98 @@
+# ============================================
+# 4. POD ANTI-AFFINITY EXAMPLES
+# ============================================
+
+---
+# Pod Anti-Affinity - High Availability
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app-ha
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-ha
+  template:
+    metadata:
+      labels:
+        app: web-ha
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: web-ha
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: web
+        image: nginx:1.21
+
+---
+# Zone-Level Anti-Affinity
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database-cluster
+spec:
+  serviceName: database
+  replicas: 3
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: database
+            topologyKey: topology.kubernetes.io/zone
+      containers:
+      - name: postgres
+        image: postgres:15
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+# Preferred Anti-Affinity
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: backend
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: api
+        image: api:1.0
