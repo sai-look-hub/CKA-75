@@ -1,0 +1,245 @@
+pod-affinity-required.yaml
+Purpose: Hard requirement using node affinity (MUST match)
+File: examples/03-node-affinity/pod-affinity-required.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: affinity-required
+  labels:
+    app: regional-app
+    method: affinity-required
+spec:
+  affinity:
+    nodeAffinity:
+      # HARD requirement - pod MUST be scheduled on a node matching this rule
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          # Pod must run in us-west region
+          - key: region
+            operator: In
+            values:
+            - us-west
+  containers:
+  - name: nginx
+    image: nginx:1.24
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+
+# This pod will ONLY be scheduled on nodes with region=us-west label
+# If no such nodes exist, the pod will remain in Pending state
+Usage:
+bash# Label nodes with region
+kubectl label node worker-node-1 region=us-west
+kubectl label node worker-node-2 region=us-west
+
+# Apply pod
+kubectl apply -f examples/03-node-affinity/pod-affinity-required.yaml
+kubectl get pod affinity-required -o wide
+Expected Result: Pod on node with region=us-west label
+
+pod-affinity-preferred.yaml
+Purpose: Soft preference using node affinity (SHOULD match)
+File: examples/03-node-affinity/pod-affinity-preferred.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: affinity-preferred
+  labels:
+    app: flexible-app
+    method: affinity-preferred
+spec:
+  affinity:
+    nodeAffinity:
+      # SOFT preference - scheduler will TRY to schedule here but can use other nodes
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 80  # High priority preference (1-100 scale)
+        preference:
+          matchExpressions:
+          - key: disktype
+            operator: In
+            values:
+            - ssd
+      - weight: 20  # Lower priority preference
+        preference:
+          matchExpressions:
+          - key: zone
+            operator: In
+            values:
+            - us-west-1a
+  containers:
+  - name: nginx
+    image: nginx:1.24
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "200m"
+        memory: "256Mi"
+
+# Scheduler calculates scores:
+# - Node with SSD + us-west-1a zone: 80 + 20 = 100 points (best match)
+# - Node with only SSD: 80 points
+# - Node with only us-west-1a: 20 points
+# - Node with neither: 0 points (but still usable!)
+#
+# Pod will be scheduled on highest-scoring node, but can run anywhere if needed
+Usage:
+bash# Label nodes
+kubectl label node worker-node-1 disktype=ssd zone=us-west-1a
+kubectl label node worker-node-2 disktype=ssd
+
+# Apply pod
+kubectl apply -f examples/03-node-affinity/pod-affinity-preferred.yaml
+kubectl get pod affinity-preferred -o wide
+Expected Result: Pod prefers SSD nodes but can run anywhere
+
+pod-affinity-combined.yaml
+Purpose: Combine required (hard) and preferred (soft) affinity
+File: examples/03-node-affinity/pod-affinity-combined.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: affinity-combined
+  labels:
+    app: smart-scheduler
+    method: affinity-combined
+spec:
+  affinity:
+    nodeAffinity:
+      # HARD requirement: Must run in us-west region
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: region
+            operator: In
+            values:
+            - us-west
+      
+      # SOFT preference: Prefer SSD and high memory within us-west region
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 70  # Strong preference for SSD
+        preference:
+          matchExpressions:
+          - key: disktype
+            operator: In
+            values:
+            - ssd
+      - weight: 30  # Moderate preference for high memory
+        preference:
+          matchExpressions:
+          - key: memory
+            operator: In
+            values:
+            - high
+  containers:
+  - name: app
+    image: nginx:1.24
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+# Scheduling logic:
+# 1. Filter nodes: Must have region=us-west (required)
+# 2. Score remaining nodes:
+#    - us-west node with SSD + high memory: 70 + 30 = 100 points (best!)
+#    - us-west node with only SSD: 70 points
+#    - us-west node with only high memory: 30 points
+#    - us-west node with neither: 0 points (still valid)
+# 3. Schedule on highest-scoring node from filtered list
+Usage:
+bash# Label nodes
+kubectl label node worker-node-1 region=us-west disktype=ssd memory=high
+kubectl label node worker-node-2 region=us-west disktype=ssd
+
+# Apply pod
+kubectl apply -f examples/03-node-affinity/pod-affinity-combined.yaml
+kubectl get pod affinity-combined -o wide
+Expected Result: Pod on us-west node, preferably with SSD and high memory
+
+deployment-affinity.yaml
+Purpose: Deployment with node affinity and service
+File: examples/03-node-affinity/deployment-affinity.yaml
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: regional-app
+  labels:
+    app: regional-app
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: regional-app
+  template:
+    metadata:
+      labels:
+        app: regional-app
+    spec:
+      affinity:
+        nodeAffinity:
+          # Prefer us-west region nodes
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: region
+                operator: In
+                values:
+                - us-west
+      containers:
+      - name: app
+        image: nginx:1.24
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: regional-app
+spec:
+  selector:
+    app: regional-app
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+Usage:
+bashkubectl apply -f examples/03-node-affinity/deployment-affinity.yaml
+kubectl get pods -l app=regional-app -o wide
+Expected Result: Pods prefer us-west region nodes
