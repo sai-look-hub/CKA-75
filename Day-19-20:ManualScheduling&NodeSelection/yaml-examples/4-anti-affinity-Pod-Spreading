@@ -1,0 +1,104 @@
+pod-anti-affinity.yaml
+Purpose: Spread pods across nodes for high availability
+File: examples/04-anti-affinity/pod-anti-affinity.yaml
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-ha
+  labels:
+    app: web-ha
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-ha
+  template:
+    metadata:
+      labels:
+        app: web-ha
+    spec:
+      affinity:
+        podAntiAffinity:
+          # HARD rule: Don't schedule pods of the same app on the same node
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - web-ha
+            topologyKey: kubernetes.io/hostname  # Each pod on different node
+      containers:
+      - name: nginx
+        image: nginx:1.24
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+
+# This ensures high availability by spreading replicas across different nodes
+# If you have 3 nodes and 3 replicas, each replica will be on a different node
+Usage:
+bashkubectl apply -f examples/04-anti-affinity/pod-anti-affinity.yaml
+kubectl get pods -l app=web-ha -o wide
+Expected Result: Each pod on different node
+
+deployment-spread.yaml
+Purpose: Spread pods across zones (multi-AZ)
+File: examples/04-anti-affinity/deployment-spread.yaml
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-zone-app
+  labels:
+    app: multi-zone
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: multi-zone
+  template:
+    metadata:
+      labels:
+        app: multi-zone
+    spec:
+      affinity:
+        podAntiAffinity:
+          # Prefer different zones (soft requirement)
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - multi-zone
+              topologyKey: zone  # Spread across zones
+      containers:
+      - name: app
+        image: nginx:1.24
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+Usage:
+bash# Label nodes with zones
+kubectl label node worker-node-1 zone=us-west-1a
+kubectl label node worker-node-2 zone=us-west-1b
+kubectl label node worker-node-3 zone=us-east-1a
+
+# Apply deployment
+kubectl apply -f examples/04-anti-affinity/deployment-spread.yaml
+kubectl get pods -l app=multi-zone -o wide
+Expected Result: Pods spread across different zones
