@@ -1,0 +1,461 @@
+gpu-workload.yaml
+Purpose: ML/AI training workload on GPU nodes
+File: examples/05-real-world/gpu-workload.yaml
+yamlapiVersion: v1
+kind: Pod
+metadata:
+  name: ml-training
+  labels:
+    app: ml-training
+    workload: gpu
+spec:
+  nodeSelector:
+    hardware: gpu  # Require GPU node
+  containers:
+  - name: tensorflow
+    image: tensorflow/tensorflow:latest-gpu
+    command: ["python", "-c"]
+    args:
+    - |
+      import tensorflow as tf
+      import time
+      print("TensorFlow version:", tf.__version__)
+      print("GPU devices:", tf.config.list_physical_devices('GPU'))
+      print("Training simulation starting...")
+      time.sleep(3600)  # Simulate long-running training
+    resources:
+      requests:
+        cpu: "2000m"
+        memory: "4Gi"
+      limits:
+        cpu: "4000m"
+        memory: "8Gi"
+        nvidia.com/gpu: 1  # Request 1 GPU
+Usage:
+bash# Label GPU node
+kubectl label node worker-node-1 hardware=gpu
+
+# Apply workload
+kubectl apply -f examples/05-real-world/gpu-workload.yaml
+kubectl get pod ml-training -o wide
+kubectl logs ml-training
+Expected Result: Pod on GPU node with GPU allocated
+
+database-ssd.yaml
+Purpose: StatefulSet database on SSD storage with HA
+File: examples/05-real-world/database-ssd.yaml
+yamlapiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      affinity:
+        # Node Affinity: Must run on SSD nodes
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: disktype
+                operator: In
+                values:
+                - ssd
+        # Pod Anti-Affinity: Spread across nodes
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - postgres
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: postgres
+        image: postgres:15
+        env:
+        - name: POSTGRES_PASSWORD
+          value: "mysecretpassword"
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  clusterIP: None  # Headless service
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    name: postgres
+Usage:
+bash# Label SSD nodes
+kubectl label node worker-node-1 disktype=ssd
+kubectl label node worker-node-2 disktype=ssd
+kubectl label node worker-node-3 disktype=ssd
+
+# Apply StatefulSet
+kubectl apply -f examples/05-real-world/database-ssd.yaml
+kubectl get pods -l app=postgres -o wide
+kubectl get pvc
+Expected Result: 3 postgres pods on different SSD nodes
+
+regional-deployment.yaml
+Purpose: Multi-region web application
+File: examples/05-real-world/regional-deployment.yaml
+yamlapiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-global
+  labels:
+    app: webapp-global
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: webapp-global
+  template:
+    metadata:
+      labels:
+        app: webapp-global
+    spec:
+      affinity:
+        nodeAffinity:
+          # Prefer distribution across regions
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: region
+                operator: In
+                values:
+                - us-west
+          - weight: 30
+            preference:
+              matchExpressions:
+              - key: region
+                operator: In
+                values:
+                - us-east
+          - weight: 20
+            preference:
+              matchExpressions:
+              - key: region
+                operator: In
+                values:
+                - eu-west
+        # Spread across nodes
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - webapp-global
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: webapp
+        image: nginx:1.24
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-global
+spec:
+  selector:
+    app: webapp-global
+  ports:
+  - port: 80
+    targetPort: 80
+  type: LoadBalancer
+Usage:
+bash# Label nodes with regions
+kubectl label node worker-node-1 region=us-west
+kubectl label node worker-node-2 region=us-east
+kubectl label node worker-node-3 region=eu-west
+
+# Apply deployment
+kubectl apply -f examples/05-real-world/regional-deployment.yaml
+kubectl get pods -l app=webapp-global -o wide
+Expected Result: Pods distributed across regions
+
+multi-tier-app.yaml
+Purpose: Complete multi-tier application with different scheduling for each tier
+File: examples/05-real-world/multi-tier-app.yaml
+yaml# Frontend - spread across all nodes
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    tier: frontend
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        tier: frontend
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: tier
+                  operator: In
+                  values:
+                  - frontend
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.24
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+---
+# Backend - prefer production nodes
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      tier: backend
+  template:
+    metadata:
+      labels:
+        tier: backend
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: environment
+                operator: In
+                values:
+                - production
+      containers:
+      - name: api
+        image: nginx:1.24  # Replace with your API image
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+---
+# Database - required on SSD nodes
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: database
+  labels:
+    tier: database
+spec:
+  serviceName: database
+  replicas: 2
+  selector:
+    matchLabels:
+      tier: database
+  template:
+    metadata:
+      labels:
+        tier: database
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: disktype
+                operator: In
+                values:
+                - ssd
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: tier
+                operator: In
+                values:
+                - database
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: postgres
+        image: postgres:15
+        env:
+        - name: POSTGRES_PASSWORD
+          value: "password"
+        ports:
+        - containerPort: 5432
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+---
+# Cache - prefer high memory nodes
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cache
+  labels:
+    tier: cache
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      tier: cache
+  template:
+    metadata:
+      labels:
+        tier: cache
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: memory
+                operator: In
+                values:
+                - high
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "400m"
+            memory: "1Gi"
+---
+# Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  selector:
+    tier: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    tier: backend
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database
+spec:
+  clusterIP: None
+  selector:
+    tier: database
+  ports:
+  - port: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache
+spec:
+  selector:
+    tier: cache
+  ports:
+  - port: 6379
+Usage:
+bash# Label nodes appropriately
+kubectl label node worker-node-1 environment=production disktype=ssd memory=high
+kubectl label node worker-node-2 environment=production disktype=ssd
+kubectl label node worker-node-3 environment=staging
+
+# Apply multi-tier app
+kubectl apply -f examples/05-real-world/multi-tier-app.yaml
+
+# Check all tiers
+kubectl get pods -l tier=frontend -o wide
+kubectl get pods -l tier=backend -o wide
+kubectl get pods -l tier=database -o wide
+kubectl get pods -l tier=cache -o wide
+Expected Result: Each tier scheduled appropriately
