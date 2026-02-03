@@ -1,0 +1,106 @@
+# ============================================
+# 5. COMBINED AFFINITY EXAMPLES
+# ============================================
+
+---
+# Node Affinity + Pod Anti-Affinity
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: production-app
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: prod-app
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: prod-app
+        tier: backend
+    spec:
+      affinity:
+        # Node Affinity - SSD nodes
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: disk-type
+                operator: In
+                values:
+                - ssd
+        # Pod Anti-Affinity - Spread across nodes
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: prod-app
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: app
+        image: prod-app:2.0
+
+---
+# Full Stack with All Affinities
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: complete-example
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: complete
+  template:
+    metadata:
+      labels:
+        app: complete
+    spec:
+      # Tolerations
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "production"
+        effect: "NoSchedule"
+      
+      affinity:
+        # Node Affinity
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: environment
+                operator: In
+                values:
+                - production
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 50
+            preference:
+              matchExpressions:
+              - key: topology.kubernetes.io/zone
+                operator: In
+                values:
+                - us-east-1a
+        
+        # Pod Affinity - Near cache
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: cache
+              topologyKey: kubernetes.io/hostname
+        
+        # Pod Anti-Affinity - Away from self
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: complete
+            topologyKey: kubernetes.io/hostname
+      
+      containers:
+      - name: app
+        image: myapp:1.0
