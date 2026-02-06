@@ -1,0 +1,270 @@
+# pod-custom-scheduler.yaml
+# Example pods using the custom scheduler
+
+---
+# Simple pod using custom scheduler
+apiVersion: v1
+kind: Pod
+metadata:
+  name: custom-scheduled-pod
+  labels:
+    app: nginx
+    scheduler: custom
+spec:
+  # Specify the custom scheduler name
+  schedulerName: custom-scheduler
+  
+  containers:
+  - name: nginx
+    image: nginx:1.25-alpine
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+
+---
+# Pod with node affinity using custom scheduler
+apiVersion: v1
+kind: Pod
+metadata:
+  name: custom-scheduled-affinity-pod
+  labels:
+    app: redis
+    scheduler: custom
+spec:
+  schedulerName: custom-scheduler
+  
+  # Node affinity rules - custom scheduler will respect these
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/hostname
+            operator: Exists
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: node-role.kubernetes.io/worker
+            operator: In
+            values:
+            - "true"
+  
+  containers:
+  - name: redis
+    image: redis:7-alpine
+    ports:
+    - containerPort: 6379
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "250m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
+
+---
+# Pod with tolerations using custom scheduler
+apiVersion: v1
+kind: Pod
+metadata:
+  name: custom-scheduled-toleration-pod
+  labels:
+    app: monitor
+    scheduler: custom
+spec:
+  schedulerName: custom-scheduler
+  
+  # Tolerations allow scheduling on tainted nodes
+  tolerations:
+  - key: "special"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  
+  containers:
+  - name: node-exporter
+    image: prom/node-exporter:latest
+    ports:
+    - containerPort: 9100
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+
+---
+# High-priority pod using custom scheduler
+apiVersion: v1
+kind: Pod
+metadata:
+  name: custom-scheduled-priority-pod
+  labels:
+    app: critical-service
+    scheduler: custom
+spec:
+  schedulerName: custom-scheduler
+  
+  # High priority to ensure it gets scheduled first
+  priorityClassName: system-cluster-critical
+  
+  containers:
+  - name: critical-app
+    image: nginx:alpine
+    ports:
+    - containerPort: 80
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "500m"
+      limits:
+        memory: "512Mi"
+        cpu: "1000m"
+    
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+---
+# Pod with resource-intensive requirements
+apiVersion: v1
+kind: Pod
+metadata:
+  name: custom-scheduled-resources-pod
+  labels:
+    app: ml-training
+    scheduler: custom
+    workload: compute-intensive
+spec:
+  schedulerName: custom-scheduler
+  
+  containers:
+  - name: training-job
+    image: tensorflow/tensorflow:latest-gpu
+    
+    # Large resource requirements
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+        # Uncomment if you have GPU nodes
+        # nvidia.com/gpu: 1
+      limits:
+        memory: "8Gi"
+        cpu: "4"
+        # nvidia.com/gpu: 1
+    
+    command: ["python"]
+    args: ["-m", "http.server", "8080"]
+    
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  
+  volumes:
+  - name: data
+    emptyDir: {}
+
+---
+# Deployment using custom scheduler
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-scheduled-deployment
+  labels:
+    app: web-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+        scheduler: custom
+    spec:
+      # All pods in this deployment use custom scheduler
+      schedulerName: custom-scheduler
+      
+      containers:
+      - name: web
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Usage Instructions:
+#
+# 1. Ensure custom scheduler is running:
+#    kubectl get pods -n kube-system | grep custom-scheduler
+#
+# 2. Deploy individual pods:
+#    kubectl apply -f pod-custom-scheduler.yaml
+#
+# 3. Or deploy specific pods:
+#    kubectl apply -f - <<EOF
+#    <paste pod yaml here>
+#    EOF
+#
+# 4. Verify scheduling:
+#    kubectl get pods -o wide
+#    kubectl get events --sort-by=.metadata.creationTimestamp | grep Scheduled
+#
+# 5. Check which scheduler was used:
+#    kubectl get pod <pod-name> -o jsonpath='{.spec.schedulerName}'
+#
+# 6. Compare with default scheduler:
+#    kubectl run default-pod --image=nginx
+#    kubectl get pod default-pod -o jsonpath='{.spec.schedulerName}'
+#
+# 7. View scheduler events:
+#    kubectl describe pod <pod-name> | grep -A10 Events
+#
+# 8. Monitor custom scheduler logs:
+#    kubectl logs -n kube-system -l component=custom-scheduler -f
+#
+# Notes:
+# - schedulerName must match the name in scheduler configuration
+# - If custom scheduler is not available, pods remain in Pending state
+# - You can switch schedulers by changing the schedulerName field
+# - Deployments and other controllers also support schedulerName
