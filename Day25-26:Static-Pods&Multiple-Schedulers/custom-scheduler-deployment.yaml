@@ -1,0 +1,257 @@
+# custom-scheduler-deployment.yaml
+# Deploy a custom scheduler in Kubernetes cluster
+# This creates a second scheduler alongside the default scheduler
+
+---
+# ServiceAccount for the custom scheduler
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: custom-scheduler
+  namespace: kube-system
+  labels:
+    app: custom-scheduler
+
+---
+# ClusterRole with permissions needed for scheduling
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: custom-scheduler
+  labels:
+    app: custom-scheduler
+rules:
+  # Permissions to read nodes
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  
+  # Permissions to read and update pods
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  
+  # Permissions to bind pods to nodes
+  - apiGroups: [""]
+    resources: ["bindings", "pods/binding"]
+    verbs: ["create"]
+  
+  # Permissions to read pod status
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get", "update", "patch"]
+  
+  # Permissions for events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+  
+  # Permissions for persistent volumes
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  
+  # Permissions for config maps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  
+  # Permissions for replication controllers
+  - apiGroups: [""]
+    resources: ["replicationcontrollers"]
+    verbs: ["get", "list", "watch"]
+  
+  # Permissions for services
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+  
+  # Permissions for replica sets
+  - apiGroups: ["apps", "extensions"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Permissions for stateful sets
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Permissions for pod disruption budgets
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Permissions for storage classes
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "csinodes", "csidrivers", "csistoragecapacities"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding to bind the ClusterRole to ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: custom-scheduler
+  labels:
+    app: custom-scheduler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: custom-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: custom-scheduler
+    namespace: kube-system
+
+---
+# ConfigMap for custom scheduler configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-scheduler-config
+  namespace: kube-system
+  labels:
+    app: custom-scheduler
+data:
+  scheduler-config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1
+    kind: KubeSchedulerConfiguration
+    leaderElection:
+      leaderElect: true
+      resourceName: custom-scheduler
+      resourceNamespace: kube-system
+    profiles:
+    - schedulerName: custom-scheduler
+      plugins:
+        # Use default plugins
+        score:
+          enabled:
+          - name: NodeResourcesFit
+          - name: ImageLocality
+          - name: InterPodAffinity
+          - name: NodeAffinity
+          - name: TaintToleration
+      pluginConfig:
+      - name: NodeResourcesFit
+        args:
+          scoringStrategy:
+            type: MostAllocated
+            resources:
+            - name: cpu
+              weight: 1
+            - name: memory
+              weight: 1
+
+---
+# Deployment for the custom scheduler
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-scheduler
+  namespace: kube-system
+  labels:
+    app: custom-scheduler
+    component: custom-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: custom-scheduler
+      component: custom-scheduler
+  template:
+    metadata:
+      labels:
+        app: custom-scheduler
+        component: custom-scheduler
+    spec:
+      serviceAccountName: custom-scheduler
+      
+      # Tolerations to allow scheduling on master nodes
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      
+      # Priority class for scheduler
+      priorityClassName: system-cluster-critical
+      
+      containers:
+      - name: custom-scheduler
+        image: registry.k8s.io/kube-scheduler:v1.28.0
+        imagePullPolicy: IfNotPresent
+        
+        command:
+        - kube-scheduler
+        - --config=/etc/kubernetes/scheduler-config.yaml
+        - --leader-elect=true
+        - --leader-elect-resource-name=custom-scheduler
+        - --leader-elect-resource-namespace=kube-system
+        - --v=2
+        
+        volumeMounts:
+        - name: config
+          mountPath: /etc/kubernetes
+          readOnly: true
+        
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 10259
+            scheme: HTTPS
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 15
+        
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 10259
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+      
+      volumes:
+      - name: config
+        configMap:
+          name: custom-scheduler-config
+
+---
+# Usage Instructions:
+#
+# 1. Deploy the custom scheduler:
+#    kubectl apply -f custom-scheduler-deployment.yaml
+#
+# 2. Verify the scheduler is running:
+#    kubectl get pods -n kube-system | grep custom-scheduler
+#    kubectl logs -n kube-system -l component=custom-scheduler
+#
+# 3. Create a pod using the custom scheduler:
+#    See pod-custom-scheduler.yaml
+#
+# 4. Verify scheduling:
+#    kubectl get events --sort-by=.metadata.creationTimestamp | grep custom-scheduler
+#
+# 5. Monitor the scheduler:
+#    kubectl logs -n kube-system -l component=custom-scheduler -f
+#
+# 6. Check scheduler metrics:
+#    kubectl get --raw /apis/metrics.k8s.io/v1beta1/namespaces/kube-system/pods/custom-scheduler-<hash>
+#
+# Notes:
+# - This scheduler uses MostAllocated strategy (bin packing)
+# - Leader election is enabled for high availability
+# - The scheduler runs in the kube-system namespace
+# - You can have multiple schedulers running simultaneously
+# - Each pod specifies which scheduler to use via schedulerName field
