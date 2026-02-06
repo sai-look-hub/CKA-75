@@ -1,0 +1,290 @@
+# static-pod-monitoring.yaml
+# Advanced Static Pod - Node Monitoring Stack
+# Location: /etc/kubernetes/manifests/static-pod-monitoring.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-monitoring
+  namespace: kube-system
+  labels:
+    app: node-monitoring
+    type: static-pod
+    component: monitoring
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9100"
+    description: "Node monitoring with node-exporter and log collector"
+spec:
+  # Use host network for better monitoring access
+  hostNetwork: true
+  hostPID: true
+  hostIPC: false
+  
+  # DNS policy for host network
+  dnsPolicy: ClusterFirstWithHostNet
+  
+  # Node selector (optional - for specific nodes)
+  # nodeSelector:
+  #   node-role.kubernetes.io/worker: ""
+  
+  containers:
+  # Container 1: Node Exporter for Prometheus
+  - name: node-exporter
+    image: prom/node-exporter:v1.7.0
+    
+    args:
+    - --path.procfs=/host/proc
+    - --path.sysfs=/host/sys
+    - --path.rootfs=/host/root
+    - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    - --web.listen-address=:9100
+    
+    ports:
+    - name: metrics
+      containerPort: 9100
+      hostPort: 9100
+      protocol: TCP
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    volumeMounts:
+    - name: proc
+      mountPath: /host/proc
+      readOnly: true
+    - name: sys
+      mountPath: /host/sys
+      readOnly: true
+    - name: root
+      mountPath: /host/root
+      readOnly: true
+    
+    securityContext:
+      privileged: true
+      runAsUser: 0
+  
+  # Container 2: cAdvisor for container metrics
+  - name: cadvisor
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    
+    args:
+    - --port=8080
+    - --housekeeping_interval=10s
+    - --docker_only=false
+    
+    ports:
+    - name: cadvisor
+      containerPort: 8080
+      hostPort: 8080
+      protocol: TCP
+    
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "200m"
+      limits:
+        memory: "256Mi"
+        cpu: "400m"
+    
+    volumeMounts:
+    - name: rootfs
+      mountPath: /rootfs
+      readOnly: true
+    - name: var-run
+      mountPath: /var/run
+      readOnly: false
+    - name: sys
+      mountPath: /sys
+      readOnly: true
+    - name: docker
+      mountPath: /var/lib/docker
+      readOnly: true
+    - name: disk
+      mountPath: /dev/disk
+      readOnly: true
+    
+    securityContext:
+      privileged: true
+  
+  # Container 3: Fluent Bit for log collection
+  - name: fluent-bit
+    image: fluent/fluent-bit:2.2-distroless
+    
+    env:
+    - name: NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+    - name: FLUENT_BIT_LOG_LEVEL
+      value: "info"
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    volumeMounts:
+    - name: varlog
+      mountPath: /var/log
+      readOnly: true
+    - name: varlibdockercontainers
+      mountPath: /var/lib/docker/containers
+      readOnly: true
+    - name: fluent-bit-config
+      mountPath: /fluent-bit/etc/
+    
+    securityContext:
+      runAsUser: 0
+      capabilities:
+        drop:
+        - ALL
+        add:
+        - DAC_READ_SEARCH
+  
+  # Init container to set up configurations
+  initContainers:
+  - name: setup-configs
+    image: busybox:latest
+    command:
+    - sh
+    - -c
+    - |
+      # Create fluent-bit configuration
+      cat > /config/fluent-bit/fluent-bit.conf <<'EOF'
+      [SERVICE]
+          Flush        5
+          Daemon       Off
+          Log_Level    info
+      
+      [INPUT]
+          Name              tail
+          Path              /var/log/containers/*.log
+          Parser            docker
+          Tag               kube.*
+          Refresh_Interval  5
+          Mem_Buf_Limit     5MB
+      
+      [FILTER]
+          Name                kubernetes
+          Match               kube.*
+          Kube_URL            https://kubernetes.default.svc:443
+          Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+      
+      [OUTPUT]
+          Name   stdout
+          Match  *
+      EOF
+      
+      # Create parsers configuration
+      cat > /config/fluent-bit/parsers.conf <<'EOF'
+      [PARSER]
+          Name   docker
+          Format json
+          Time_Key time
+          Time_Format %Y-%m-%dT%H:%M:%S.%LZ
+      EOF
+    
+    volumeMounts:
+    - name: fluent-bit-config
+      mountPath: /config/fluent-bit
+  
+  # Volumes
+  volumes:
+  # Node Exporter volumes
+  - name: proc
+    hostPath:
+      path: /proc
+      type: Directory
+  - name: sys
+    hostPath:
+      path: /sys
+      type: Directory
+  - name: root
+    hostPath:
+      path: /
+      type: Directory
+  
+  # cAdvisor volumes
+  - name: rootfs
+    hostPath:
+      path: /
+      type: Directory
+  - name: var-run
+    hostPath:
+      path: /var/run
+      type: Directory
+  - name: docker
+    hostPath:
+      path: /var/lib/docker
+      type: Directory
+  - name: disk
+    hostPath:
+      path: /dev/disk
+      type: Directory
+  
+  # Fluent Bit volumes
+  - name: varlog
+    hostPath:
+      path: /var/log
+      type: Directory
+  - name: varlibdockercontainers
+    hostPath:
+      path: /var/lib/docker/containers
+      type: Directory
+  - name: fluent-bit-config
+    emptyDir: {}
+
+---
+# Usage Instructions:
+#
+# 1. Deploy this monitoring stack as a static pod:
+#    sudo cp static-pod-monitoring.yaml /etc/kubernetes/manifests/
+#
+# 2. Verify all containers are running:
+#    kubectl get pod node-monitoring-<node-name> -n kube-system
+#    kubectl get pod node-monitoring-<node-name> -n kube-system -o jsonpath='{.status.containerStatuses[*].name}'
+#
+# 3. Access node-exporter metrics:
+#    kubectl exec -it node-monitoring-<node-name> -n kube-system -c node-exporter -- wget -O- http://localhost:9100/metrics
+#    # Or from outside the cluster:
+#    curl http://<node-ip>:9100/metrics
+#
+# 4. Access cAdvisor metrics:
+#    kubectl port-forward -n kube-system node-monitoring-<node-name> 8080:8080
+#    # Then visit: http://localhost:8080/metrics
+#
+# 5. Check Fluent Bit logs:
+#    kubectl logs -n kube-system node-monitoring-<node-name> -c fluent-bit -f
+#
+# 6. View all container logs:
+#    kubectl logs -n kube-system node-monitoring-<node-name> --all-containers=true
+#
+# 7. Inspect specific container:
+#    kubectl exec -it node-monitoring-<node-name> -n kube-system -c node-exporter -- sh
+#
+# Notes:
+# - This is a multi-container static pod (sidecar pattern)
+# - All containers share the same network namespace (hostNetwork: true)
+# - Privileged mode is required for full system monitoring
+# - Each container has its own resource limits
+# - Init container sets up configurations before main containers start
+# - This pattern is useful for node-level monitoring and logging
+#
+# Security Considerations:
+# - Uses privileged mode and hostNetwork - only use on trusted nodes
+# - Access to host filesystems and processes
+# - Consider network policies to restrict metric endpoint access
+# - Use RBAC to control who can view these pods
+#
+# To delete:
+#    sudo rm /etc/kubernetes/manifests/static-pod-monitoring.yaml
