@@ -1,0 +1,140 @@
+# static-pod-redis.yaml
+# Static Pod Example - Redis Database
+# Location: /etc/kubernetes/manifests/static-pod-redis.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: static-redis
+  namespace: kube-system
+  labels:
+    app: redis
+    type: static-pod
+    tier: cache
+  annotations:
+    description: "Static Redis pod for node-local caching"
+spec:
+  # Host networking for better performance (optional)
+  hostNetwork: false
+  
+  containers:
+  - name: redis
+    image: redis:7.2-alpine
+    
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+    
+    ports:
+    - name: redis
+      containerPort: 6379
+      protocol: TCP
+    
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "250m"
+      limits:
+        memory: "256Mi"
+        cpu: "500m"
+    
+    # Redis health checks
+    livenessProbe:
+      tcpSocket:
+        port: 6379
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    
+    readinessProbe:
+      exec:
+        command:
+          - redis-cli
+          - ping
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+    
+    # Redis configuration
+    env:
+    - name: REDIS_REPLICATION_MODE
+      value: "master"
+    
+    volumeMounts:
+    - name: redis-data
+      mountPath: /data
+    - name: redis-config
+      mountPath: /usr/local/etc/redis
+    
+    # Security context for Redis
+    securityContext:
+      runAsUser: 999
+      runAsGroup: 999
+      fsGroup: 999
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+  
+  # Init container to set up configuration
+  initContainers:
+  - name: config-init
+    image: busybox:latest
+    command:
+      - sh
+      - -c
+      - |
+        cat > /config/redis.conf <<EOF
+        port 6379
+        bind 0.0.0.0
+        protected-mode yes
+        requirepass changeme
+        maxmemory 200mb
+        maxmemory-policy allkeys-lru
+        save 900 1
+        save 300 10
+        save 60 10000
+        dbfilename dump.rdb
+        dir /data
+        EOF
+    volumeMounts:
+    - name: redis-config
+      mountPath: /config
+  
+  volumes:
+  - name: redis-data
+    hostPath:
+      path: /var/lib/static-redis-data
+      type: DirectoryOrCreate
+  - name: redis-config
+    emptyDir: {}
+
+---
+# Usage Instructions:
+#
+# 1. Deploy this static pod:
+#    sudo cp static-pod-redis.yaml /etc/kubernetes/manifests/
+#
+# 2. Verify deployment:
+#    kubectl get pods -n kube-system | grep static-redis
+#
+# 3. Access Redis:
+#    kubectl exec -it static-redis-<node-name> -n kube-system -- redis-cli
+#    > AUTH changeme
+#    > PING
+#    > SET test "Hello from static pod"
+#    > GET test
+#
+# 4. Check persistence:
+#    ls -la /var/lib/static-redis-data/
+#
+# 5. Monitor Redis:
+#    kubectl logs static-redis-<node-name> -n kube-system
+#
+# Notes:
+# - Data persists on the node at /var/lib/static-redis-data/
+# - Change the password in the init container before production use
+# - Resource limits prevent Redis from consuming too much memory
+# - This is a single-node Redis instance (not clustered)
