@@ -1,0 +1,101 @@
+# static-pod-nginx.yaml
+# Basic Static Pod Example - Nginx Web Server
+# Location: /etc/kubernetes/manifests/static-pod-nginx.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: static-nginx
+  labels:
+    app: nginx
+    type: static-pod
+    tier: frontend
+  annotations:
+    description: "Static pod example running Nginx web server"
+spec:
+  # Static pods don't support restart policies other than Always
+  restartPolicy: Always
+  
+  containers:
+  - name: nginx
+    image: nginx:1.25-alpine
+    
+    ports:
+    - name: http
+      containerPort: 80
+      protocol: TCP
+    
+    # Resource management is important for static pods
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    # Health checks ensure the container is working
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+    
+    # Environment variables
+    env:
+    - name: NGINX_PORT
+      value: "80"
+    - name: ENVIRONMENT
+      value: "static-pod"
+    
+    # Volume mounts for custom configuration
+    volumeMounts:
+    - name: nginx-config
+      mountPath: /etc/nginx/conf.d
+      readOnly: true
+    - name: html-content
+      mountPath: /usr/share/nginx/html
+      readOnly: true
+  
+  # Volumes - using hostPath for static pod persistence
+  volumes:
+  - name: nginx-config
+    hostPath:
+      path: /etc/static-pods/nginx/config
+      type: DirectoryOrCreate
+  - name: html-content
+    hostPath:
+      path: /etc/static-pods/nginx/html
+      type: DirectoryOrCreate
+
+---
+# How to deploy this static pod:
+# 
+# 1. Copy this file to the kubelet's static pod directory:
+#    sudo cp static-pod-nginx.yaml /etc/kubernetes/manifests/
+#
+# 2. The kubelet will automatically detect and create the pod
+#
+# 3. Verify with:
+#    kubectl get pods -A | grep static-nginx
+#
+# 4. Access the pod:
+#    kubectl get pod static-nginx-<node-name> -o wide
+#
+# 5. To update: edit the file in /etc/kubernetes/manifests/
+#    The kubelet will automatically restart the pod
+#
+# 6. To delete: remove the file from /etc/kubernetes/manifests/
+#    sudo rm /etc/kubernetes/manifests/static-pod-nginx.yaml
