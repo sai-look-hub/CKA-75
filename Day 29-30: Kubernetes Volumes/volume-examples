@@ -1,0 +1,423 @@
+# volume-examples.yaml
+# Comprehensive examples of different volume types
+
+---
+# 1. Basic emptyDir Volume
+apiVersion: v1
+kind: Pod
+metadata:
+  name: emptydir-basic
+  labels:
+    app: volume-demo
+    type: emptydir
+spec:
+  containers:
+  - name: busybox
+    image: busybox:latest
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: cache
+      mountPath: /cache
+  volumes:
+  - name: cache
+    emptyDir: {}
+
+---
+# 2. Shared emptyDir Between Multiple Containers
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shared-volume
+  labels:
+    app: shared-demo
+spec:
+  containers:
+  - name: writer
+    image: busybox
+    command: ['sh', '-c', 'while true; do echo "$(date): Writer" >> /shared/data.log; sleep 5; done']
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared
+  
+  - name: reader
+    image: busybox
+    command: ['sh', '-c', 'sleep 10; while true; do echo "Reading:"; tail -3 /shared/data.log; sleep 10; done']
+    volumeMounts:
+    - name: shared-data
+      mountPath: /shared
+  
+  volumes:
+  - name: shared-data
+    emptyDir: {}
+
+---
+# 3. Memory-Backed emptyDir
+apiVersion: v1
+kind: Pod
+metadata:
+  name: memory-cache
+  labels:
+    app: memory-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: memory-volume
+      mountPath: /cache
+    resources:
+      requests:
+        memory: "256Mi"
+      limits:
+        memory: "512Mi"
+  
+  volumes:
+  - name: memory-volume
+    emptyDir:
+      medium: Memory
+      sizeLimit: 128Mi
+
+---
+# 4. emptyDir with Size Limit
+apiVersion: v1
+kind: Pod
+metadata:
+  name: emptydir-sized
+  labels:
+    app: size-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: limited-cache
+      mountPath: /cache
+  
+  volumes:
+  - name: limited-cache
+    emptyDir:
+      sizeLimit: 500Mi
+
+---
+# 5. Basic hostPath Volume
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostpath-basic
+  labels:
+    app: hostpath-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: host-data
+      mountPath: /host-data
+  
+  volumes:
+  - name: host-data
+    hostPath:
+      path: /mnt/data
+      type: DirectoryOrCreate
+
+---
+# 6. hostPath for Node Log Access
+apiVersion: v1
+kind: Pod
+metadata:
+  name: log-viewer
+  labels:
+    app: log-access
+spec:
+  containers:
+  - name: log-reader
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: varlog
+      mountPath: /var/log
+      readOnly: true
+  
+  volumes:
+  - name: varlog
+    hostPath:
+      path: /var/log
+      type: Directory
+
+---
+# 7. ConfigMap as Volume
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  database.url: "postgresql://db:5432/mydb"
+  app.mode: "production"
+  app.json: |
+    {
+      "feature": "enabled",
+      "timeout": 30
+    }
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: configmap-pod
+  labels:
+    app: config-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: config
+      mountPath: /etc/config
+      readOnly: true
+  
+  volumes:
+  - name: config
+    configMap:
+      name: app-config
+
+---
+# 8. Secret as Volume
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+type: Opaque
+stringData:
+  username: "admin"
+  password: "secretpassword"
+  api.key: "12345-secret-api-key"
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secret-pod
+  labels:
+    app: secret-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: secrets
+      mountPath: /etc/secrets
+      readOnly: true
+  
+  volumes:
+  - name: secrets
+    secret:
+      secretName: app-secrets
+      defaultMode: 0400
+
+---
+# 9. Combined ConfigMap and Secret
+apiVersion: v1
+kind: Pod
+metadata:
+  name: config-secret-combined
+  labels:
+    app: combined-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: config
+      mountPath: /etc/config
+      readOnly: true
+    - name: secrets
+      mountPath: /etc/secrets
+      readOnly: true
+  
+  volumes:
+  - name: config
+    configMap:
+      name: app-config
+  - name: secrets
+    secret:
+      secretName: app-secrets
+
+---
+# 10. Init Container with Volume
+apiVersion: v1
+kind: Pod
+metadata:
+  name: volume-init
+  labels:
+    app: init-demo
+spec:
+  initContainers:
+  - name: init-volume
+    image: busybox
+    command:
+    - sh
+    - -c
+    - |
+      echo "Initializing volume..."
+      mkdir -p /data/app /data/logs
+      echo "Volume initialized at $(date)" > /data/initialized.txt
+      chmod -R 755 /data
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'cat /data/initialized.txt && sleep 3600']
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  
+  volumes:
+  - name: data
+    emptyDir: {}
+
+---
+# 11. SubPath Example
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multi-file-config
+data:
+  database.conf: |
+    host=db.example.com
+    port=5432
+  cache.conf: |
+    redis=cache.example.com
+    ttl=3600
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: multi-file-secret
+type: Opaque
+stringData:
+  api.key: "secret-key-12345"
+  db.password: "db-secret-password"
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: subpath-pod
+  labels:
+    app: subpath-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    # Mount only specific file from ConfigMap
+    - name: config
+      mountPath: /app/config/database.conf
+      subPath: database.conf
+      readOnly: true
+    # Mount only specific file from Secret
+    - name: secrets
+      mountPath: /app/secrets/api.key
+      subPath: api.key
+      readOnly: true
+  
+  volumes:
+  - name: config
+    configMap:
+      name: multi-file-config
+  - name: secrets
+    secret:
+      secretName: multi-file-secret
+
+---
+# 12. Volume with Security Context
+apiVersion: v1
+kind: Pod
+metadata:
+  name: volume-permissions
+  labels:
+    app: permission-demo
+spec:
+  securityContext:
+    fsGroup: 2000
+    runAsUser: 1000
+    runAsGroup: 3000
+  
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: data
+      mountPath: /data
+    securityContext:
+      allowPrivilegeEscalation: false
+  
+  volumes:
+  - name: data
+    emptyDir: {}
+
+---
+# 13. Projected Volume (Advanced)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: projected-volume
+  labels:
+    app: projected-demo
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+    volumeMounts:
+    - name: all-in-one
+      mountPath: /projected
+      readOnly: true
+  
+  volumes:
+  - name: all-in-one
+    projected:
+      sources:
+      - configMap:
+          name: app-config
+      - secret:
+          name: app-secrets
+      - downwardAPI:
+          items:
+          - path: "pod-name"
+            fieldRef:
+              fieldPath: metadata.name
+          - path: "namespace"
+            fieldRef:
+              fieldPath: metadata.namespace
+
+---
+# Usage Instructions:
+#
+# Deploy individual examples:
+#   kubectl apply -f volume-examples.yaml
+#
+# Or deploy specific resources:
+#   kubectl apply -f volume-examples.yaml -l app=emptydir-basic
+#
+# View all volume-demo pods:
+#   kubectl get pods -l app=volume-demo
+#
+# Cleanup all examples:
+#   kubectl delete -f volume-examples.yaml
+#
+# Test individual volumes:
+#   kubectl exec <pod-name> -- ls -la /cache
+#   kubectl exec <pod-name> -- cat /etc/config/<file>
