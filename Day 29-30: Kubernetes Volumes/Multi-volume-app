@@ -1,0 +1,385 @@
+# multi-volume-app.yaml
+# Complete application demonstrating multiple volume types
+
+---
+# Application ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  app.json: |
+    {
+      "port": 3000,
+      "cacheEnabled": true,
+      "cacheTTL": 3600,
+      "logLevel": "info",
+      "features": {
+        "authentication": true,
+        "rateLimit": 100
+      }
+    }
+  database.conf: |
+    host=db.example.com
+    port=5432
+    database=myapp
+    max_connections=20
+
+---
+# Nginx ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  nginx.conf: |
+    events {
+      worker_connections 1024;
+    }
+    http {
+      upstream backend {
+        server localhost:3000;
+      }
+      
+      server {
+        listen 80;
+        server_name _;
+        
+        # Access and error logs to shared volume
+        access_log /logs/nginx-access.log;
+        error_log /logs/nginx-error.log;
+        
+        location / {
+          proxy_pass http://backend;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+        }
+        
+        # Expose cache directory for debugging
+        location /cache {
+          alias /cache;
+          autoindex on;
+        }
+        
+        # Health check endpoint
+        location /health {
+          access_log off;
+          return 200 "healthy\n";
+        }
+      }
+    }
+
+---
+# Application Secrets
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+type: Opaque
+stringData:
+  db.password: "production-db-password"
+  api.key: "prod-api-key-12345-67890"
+  jwt.secret: "jwt-secret-key-for-tokens"
+
+---
+# Multi-Volume Application Pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: multi-volume-app
+  labels:
+    app: multi-volume-demo
+    tier: frontend
+spec:
+  # Init container to prepare volumes
+  initContainers:
+  - name: init-volumes
+    image: busybox
+    command:
+    - sh
+    - -c
+    - |
+      echo "Initializing volumes..."
+      mkdir -p /cache/backend /cache/nginx
+      mkdir -p /logs/backend /logs/nginx
+      echo "Volume initialization complete at $(date)" > /cache/init.log
+      chmod -R 755 /cache /logs
+    volumeMounts:
+    - name: shared-cache
+      mountPath: /cache
+    - name: logs
+      mountPath: /logs
+  
+  containers:
+  # Backend container
+  - name: backend
+    image: node:18-alpine
+    workingDir: /app
+    command:
+    - sh
+    - -c
+    - |
+      cat > server.js << 'EOF'
+      const http = require('http');
+      const fs = require('fs');
+      
+      // Read configuration
+      const config = JSON.parse(fs.readFileSync('/app/config/app.json', 'utf8'));
+      const secrets = {
+        dbPassword: fs.readFileSync('/app/secrets/db.password', 'utf8').trim(),
+        apiKey: fs.readFileSync('/app/secrets/api.key', 'utf8').trim()
+      };
+      
+      const port = config.port;
+      
+      // Simple request counter for cache demo
+      let requestCount = 0;
+      
+      const server = http.createServer((req, res) => {
+        requestCount++;
+        const now = new Date().toISOString();
+        
+        // Log request
+        const logEntry = `${now} - ${req.method} ${req.url} - Request #${requestCount}\n`;
+        fs.appendFileSync('/logs/backend/access.log', logEntry);
+        
+        // Write to cache
+        fs.writeFileSync('/cache/backend/last-request.txt', logEntry);
+        fs.writeFileSync('/cache/backend/request-count.txt', requestCount.toString());
+        
+        if (req.url === '/health') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({
+            status: 'healthy',
+            requests: requestCount,
+            config: config.features,
+            timestamp: now
+          }));
+        } else {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({
+            message: 'Multi-Volume Application',
+            request: requestCount,
+            cacheEnabled: config.cacheEnabled,
+            logLevel: config.logLevel,
+            timestamp: now
+          }));
+        }
+      });
+      
+      server.listen(port, () => {
+        console.log(`Backend server running on port ${port}`);
+        fs.writeFileSync('/logs/backend/server.log', `Server started at ${now}\n`);
+      });
+      EOF
+      
+      node server.js
+    
+    ports:
+    - name: http
+      containerPort: 3000
+    
+    volumeMounts:
+    # Configuration from ConfigMap
+    - name: app-config
+      mountPath: /app/config
+      readOnly: true
+    # Secrets
+    - name: app-secrets
+      mountPath: /app/secrets
+      readOnly: true
+    # Shared cache (emptyDir)
+    - name: shared-cache
+      mountPath: /cache
+    # Logs (emptyDir)
+    - name: logs
+      mountPath: /logs
+    
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+    
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 3000
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 3000
+      initialDelaySeconds: 5
+      periodSeconds: 5
+  
+  # Nginx frontend container
+  - name: nginx
+    image: nginx:alpine
+    ports:
+    - name: http
+      containerPort: 80
+    
+    volumeMounts:
+    # Nginx configuration from ConfigMap
+    - name: nginx-config
+      mountPath: /etc/nginx/nginx.conf
+      subPath: nginx.conf
+      readOnly: true
+    # Shared cache (same emptyDir as backend)
+    - name: shared-cache
+      mountPath: /cache
+      readOnly: true
+    # Logs (same emptyDir as backend)
+    - name: logs
+      mountPath: /logs
+    
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "50m"
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+    
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+  
+  # Log collector sidecar
+  - name: log-collector
+    image: busybox
+    command:
+    - sh
+    - -c
+    - |
+      while true; do
+        echo "=== Log Summary $(date) ==="
+        echo "Backend requests: $(cat /logs/backend/request-count.txt 2>/dev/null || echo 0)"
+        echo "Cache files: $(ls /cache/backend 2>/dev/null | wc -l)"
+        sleep 30
+      done
+    
+    volumeMounts:
+    - name: logs
+      mountPath: /logs
+      readOnly: true
+    - name: shared-cache
+      mountPath: /cache
+      readOnly: true
+    
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "10m"
+      limits:
+        memory: "64Mi"
+        cpu: "20m"
+  
+  # Volume definitions
+  volumes:
+  # 1. ConfigMap for app configuration
+  - name: app-config
+    configMap:
+      name: app-config
+  
+  # 2. ConfigMap for nginx configuration
+  - name: nginx-config
+    configMap:
+      name: nginx-config
+  
+  # 3. Secret for sensitive data
+  - name: app-secrets
+    secret:
+      secretName: app-secrets
+      defaultMode: 0400
+  
+  # 4. emptyDir for shared cache (disk-backed)
+  - name: shared-cache
+    emptyDir:
+      sizeLimit: 100Mi
+  
+  # 5. emptyDir for logs
+  - name: logs
+    emptyDir:
+      sizeLimit: 200Mi
+
+---
+# Service to expose the application
+apiVersion: v1
+kind: Service
+metadata:
+  name: multi-volume-app
+  labels:
+    app: multi-volume-demo
+spec:
+  type: ClusterIP
+  selector:
+    app: multi-volume-demo
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+
+---
+# Usage Instructions:
+#
+# 1. Deploy the application:
+#    kubectl apply -f multi-volume-app.yaml
+#
+# 2. Wait for pod to be ready:
+#    kubectl wait --for=condition=ready pod/multi-volume-app --timeout=120s
+#
+# 3. Access the application:
+#    kubectl port-forward pod/multi-volume-app 8080:80
+#    curl http://localhost:8080
+#
+# 4. Check shared cache:
+#    kubectl exec multi-volume-app -c backend -- ls -la /cache
+#    kubectl exec multi-volume-app -c nginx -- ls -la /cache
+#
+# 5. View logs:
+#    kubectl logs multi-volume-app -c backend
+#    kubectl logs multi-volume-app -c nginx
+#    kubectl logs multi-volume-app -c log-collector
+#
+# 6. Inspect volumes:
+#    kubectl exec multi-volume-app -c backend -- cat /app/config/app.json
+#    kubectl exec multi-volume-app -c backend -- ls /app/secrets
+#    kubectl exec multi-volume-app -c backend -- cat /cache/backend/last-request.txt
+#
+# 7. Test volume sharing:
+#    # Write from backend
+#    kubectl exec multi-volume-app -c backend -- sh -c 'echo "test" > /cache/test.txt'
+#    # Read from nginx
+#    kubectl exec multi-volume-app -c nginx -- cat /cache/test.txt
+#
+# 8. Monitor via browser:
+#    kubectl port-forward pod/multi-volume-app 8080:80
+#    Visit: http://localhost:8080/cache (shows cache directory)
+#
+# 9. Update configuration:
+#    kubectl edit configmap app-config
+#    # Change logLevel to "debug"
+#    # Wait ~60s for propagation
+#    kubectl delete pod multi-volume-app  # Restart to apply
+#
+# 10. Cleanup:
+#     kubectl delete -f multi-volume-app.yaml
