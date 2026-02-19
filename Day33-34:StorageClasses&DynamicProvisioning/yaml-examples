@@ -1,0 +1,289 @@
+# storageclass-examples.yaml
+# Comprehensive StorageClass examples for different cloud providers
+
+---
+# AWS EBS StorageClasses
+---
+# GP3 (General Purpose SSD) - Recommended for most workloads
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-gp3
+  labels:
+    cloud: aws
+    tier: standard
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  iopsPerGB: "3"
+  throughput: "125"
+  encrypted: "true"
+  fsType: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# IO2 (Provisioned IOPS) - High performance databases
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-io2
+  labels:
+    cloud: aws
+    tier: performance
+provisioner: ebs.csi.aws.com
+parameters:
+  type: io2
+  iopsPerGB: "50"
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+
+---
+# ST1 (Throughput Optimized HDD) - Big data, log processing
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-st1
+  labels:
+    cloud: aws
+    tier: standard
+provisioner: ebs.csi.aws.com
+parameters:
+  type: st1
+  encrypted: "false"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# SC1 (Cold HDD) - Archive, infrequent access
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: aws-sc1-archive
+  labels:
+    cloud: aws
+    tier: archive
+provisioner: ebs.csi.aws.com
+parameters:
+  type: sc1
+  encrypted: "false"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Azure Disk StorageClasses
+---
+# Premium SSD - Production databases
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-premium-ssd
+  labels:
+    cloud: azure
+    tier: performance
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: Premium_LRS
+  cachingmode: ReadOnly
+  kind: Managed
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Standard SSD - General workloads
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-standard-ssd
+  labels:
+    cloud: azure
+    tier: standard
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: StandardSSD_LRS
+  cachingmode: ReadOnly
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Standard HDD - Dev/test, backups
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-standard-hdd
+  labels:
+    cloud: azure
+    tier: archive
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: Standard_LRS
+  cachingmode: None
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Ultra Disk - Highest performance
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-ultra-disk
+  labels:
+    cloud: azure
+    tier: ultra-performance
+provisioner: disk.csi.azure.com
+parameters:
+  skuName: UltraSSD_LRS
+  cachingmode: None
+  diskIOPSReadWrite: "2000"
+  diskMBpsReadWrite: "320"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# GCP Persistent Disk StorageClasses
+---
+# SSD Persistent Disk - High performance
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gcp-ssd
+  labels:
+    cloud: gcp
+    tier: performance
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-ssd
+  replication-type: none
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Balanced Persistent Disk - Cost-effective SSD
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gcp-balanced
+  labels:
+    cloud: gcp
+    tier: standard
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-balanced
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Standard Persistent Disk - HDD
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gcp-standard
+  labels:
+    cloud: gcp
+    tier: archive
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-standard
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Regional Persistent Disk - Multi-zone HA
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gcp-regional-pd
+  labels:
+    cloud: gcp
+    tier: ha-performance
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-ssd
+  replication-type: regional-pd
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Multi-Cloud Generic Tiers
+---
+# Performance Tier (Default for production databases)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: performance
+  labels:
+    tier: performance
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+
+---
+# Standard Tier (Default for applications)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard
+  labels:
+    tier: standard
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Archive Tier (For backups and cold storage)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: archive
+  labels:
+    tier: archive
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Usage Instructions:
+#
+# 1. Apply StorageClasses for your cloud provider:
+#    kubectl apply -f storageclass-examples.yaml -l cloud=aws
+#    kubectl apply -f storageclass-examples.yaml -l cloud=azure
+#    kubectl apply -f storageclass-examples.yaml -l cloud=gcp
+#
+# 2. Or apply tier-based classes:
+#    kubectl apply -f storageclass-examples.yaml -l tier=performance
+#
+# 3. List all StorageClasses:
+#    kubectl get sc
+#
+# 4. Set default StorageClass:
+#    kubectl patch sc standard -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+#
+# 5. Create PVC using specific class:
+#    apiVersion: v1
+#    kind: PersistentVolumeClaim
+#    metadata:
+#      name: my-pvc
+#    spec:
+#      storageClassName: aws-gp3  # or azure-premium-ssd, gcp-ssd, etc.
+#      accessModes: [ReadWriteOnce]
+#      resources:
+#        requests:
+#          storage: 10Gi
