@@ -1,0 +1,494 @@
+# multi-tier-app.yaml
+# Complete multi-tier application with dynamic storage provisioning
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: multi-tier
+
+---
+# StorageClasses for the application
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: performance
+  labels:
+    tier: performance
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard
+  labels:
+    tier: standard
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: archive
+  labels:
+    tier: archive
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+
+---
+# Database Tier (Performance Storage)
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: multi-tier
+  labels:
+    component: database
+type: Opaque
+stringData:
+  password: dbpassword123
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: multi-tier
+  labels:
+    component: database
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 5432
+  selector:
+    component: database
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: multi-tier
+  labels:
+    component: database
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      component: database
+  template:
+    metadata:
+      labels:
+        component: database
+        tier: performance
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+      labels:
+        component: database
+        tier: performance
+    spec:
+      accessModes: [ReadWriteOnce]
+      storageClassName: performance
+      resources:
+        requests:
+          storage: 20Gi
+
+---
+# Cache Tier (Performance Storage)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: multi-tier
+  labels:
+    component: cache
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+  selector:
+    component: cache
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: multi-tier
+  labels:
+    component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: cache
+  template:
+    metadata:
+      labels:
+        component: cache
+        tier: performance
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command: ["redis-server", "--appendonly", "yes"]
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: multi-tier
+  labels:
+    component: cache
+    tier: performance
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: performance
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# Backend API Tier (Standard Storage)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: multi-tier
+  labels:
+    component: backend
+data:
+  app.conf: |
+    db_host=postgres
+    redis_host=redis
+    log_level=info
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: multi-tier
+  labels:
+    component: backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+  selector:
+    component: backend
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: multi-tier
+  labels:
+    component: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      component: backend
+  template:
+    metadata:
+      labels:
+        component: backend
+        tier: standard
+    spec:
+      containers:
+      - name: api
+        image: node:18-alpine
+        workingDir: /app
+        command:
+        - sh
+        - -c
+        - |
+          cat > server.js << 'EOF'
+          const http = require('http');
+          const fs = require('fs');
+          const port = 8080;
+          
+          const server = http.createServer((req, res) => {
+            const log = `${new Date().toISOString()} ${req.method} ${req.url}\n`;
+            fs.appendFileSync('/logs/access.log', log);
+            
+            res.writeHead(200, {'Content-Type': 'application/json'});
+            res.end(JSON.stringify({
+              message: 'Multi-Tier App Backend',
+              timestamp: new Date().toISOString()
+            }));
+          });
+          
+          server.listen(port, () => {
+            console.log(`Backend running on port ${port}`);
+          });
+          EOF
+          node server.js
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: logs
+          mountPath: /logs
+        - name: config
+          mountPath: /etc/app
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+      volumes:
+      - name: logs
+        persistentVolumeClaim:
+          claimName: backend-logs
+      - name: config
+        configMap:
+          name: backend-config
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backend-logs
+  namespace: multi-tier
+  labels:
+    component: backend
+    tier: standard
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# Frontend Tier (Standard Storage)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: multi-tier
+  labels:
+    component: frontend
+data:
+  nginx.conf: |
+    events { worker_connections 1024; }
+    http {
+      server {
+        listen 80;
+        location / {
+          proxy_pass http://backend:8080;
+        }
+        location /health {
+          return 200 "OK";
+        }
+      }
+    }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: multi-tier
+  labels:
+    component: frontend
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    component: frontend
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: multi-tier
+  labels:
+    component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      component: frontend
+  template:
+    metadata:
+      labels:
+        component: frontend
+        tier: standard
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: static
+          mountPath: /usr/share/nginx/html
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: config
+        configMap:
+          name: nginx-config
+      - name: static
+        persistentVolumeClaim:
+          claimName: frontend-static
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: frontend-static
+  namespace: multi-tier
+  labels:
+    component: frontend
+    tier: standard
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# Backup Tier (Archive Storage)
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-job
+  namespace: multi-tier
+  labels:
+    component: backup
+spec:
+  schedule: "0 2 * * *"  # 2 AM daily
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            component: backup
+            tier: archive
+        spec:
+          containers:
+          - name: backup
+            image: postgres:15-alpine
+            command:
+            - sh
+            - -c
+            - |
+              echo "Starting backup at $(date)"
+              pg_dump -h postgres -U postgres -d postgres > /backup/backup-$(date +%Y%m%d).sql
+              echo "Backup complete"
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+            volumeMounts:
+            - name: backup
+              mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+          - name: backup
+            persistentVolumeClaim:
+              claimName: backup-storage
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage
+  namespace: multi-tier
+  labels:
+    component: backup
+    tier: archive
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: archive
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Usage:
+# kubectl apply -f multi-tier-app.yaml
+# kubectl get all,pvc -n multi-tier
+# kubectl port-forward -n multi-tier svc/frontend 8080:80
