@@ -1,0 +1,225 @@
+# cni-examples.yaml
+# Network policy and CNI configuration examples
+
+---
+# 1. Deny all ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+
+---
+# 2. Deny all egress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-egress
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+
+---
+# 3. Allow frontend to backend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+      tier: api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# 4. Allow from specific namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          environment: production
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# 5. Allow egress to DNS and specific service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-and-api
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  - to:
+    - podSelector:
+        matchLabels:
+          app: api
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# 6. Test pods for network policy
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  containers:
+  - name: busybox
+    image: busybox
+    command: ['sh', '-c', 'sleep 3600']
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend
+  labels:
+    app: backend
+    tier: api
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    ports:
+    - containerPort: 80
+
+---
+# 7. Network testing deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: network-test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: network-test
+  template:
+    metadata:
+      labels:
+        app: network-test
+    spec:
+      containers:
+      - name: test
+        image: nicolaka/netshoot
+        command: ['sh', '-c', 'sleep infinity']
+
+---
+# 8. Calico GlobalNetworkPolicy (Calico-specific)
+# Only works with Calico CNI
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-egress-external
+spec:
+  selector: has(role)
+  types:
+  - Egress
+  egress:
+  # Allow internal cluster communication
+  - action: Allow
+    destination:
+      nets:
+      - 10.0.0.0/8
+      - 192.168.0.0/16
+  # Deny everything else
+  - action: Deny
+
+---
+# 9. Cilium Network Policy (Cilium-specific)
+# L7 policy example
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: l7-http-policy
+spec:
+  endpointSelector:
+    matchLabels:
+      app: web
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        app: client
+    toPorts:
+    - ports:
+      - port: "80"
+        protocol: TCP
+      rules:
+        http:
+        - method: "GET"
+          path: "/api/.*"
+
+---
+# 10. Test connectivity script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: network-test-scripts
+data:
+  test-connectivity.sh: |
+    #!/bin/bash
+    echo "=== Network Connectivity Test ==="
+    
+    # Test DNS
+    echo "Testing DNS..."
+    nslookup kubernetes.default
+    
+    # Test pod-to-pod
+    echo "Testing pod-to-pod..."
+    ping -c 3 <target-pod-ip>
+    
+    # Test service
+    echo "Testing service..."
+    curl -s kubernetes.default.svc.cluster.local
+    
+    # Test external
+    echo "Testing external..."
+    curl -s https://www.google.com
+
+---
+# Usage:
+# 1. Apply network policies one by one
+# 2. Test with frontend/backend pods
+# 3. Verify policy enforcement
+# 4. Use network-test deployment for debugging
