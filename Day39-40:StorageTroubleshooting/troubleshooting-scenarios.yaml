@@ -1,0 +1,293 @@
+# troubleshooting-scenarios.yaml
+# Hands-on troubleshooting scenarios for storage issues
+
+---
+# Scenario 1: PVC with wrong StorageClass
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wrong-storageclass
+  labels:
+    scenario: storageclass-notfound
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: non-existent-class
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# Scenario 2: Pod with missing PVC
+apiVersion: v1
+kind: Pod
+metadata:
+  name: missing-pvc-pod
+  labels:
+    scenario: pvc-notfound
+spec:
+  containers:
+  - name: app
+    image: nginx
+    volumeMounts:
+    - name: data
+      mountPath: /usr/share/nginx/html
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: does-not-exist
+
+---
+# Scenario 3: Permission denied issue
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: permission-test-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: permission-denied-pod
+  labels:
+    scenario: permission-denied
+spec:
+  securityContext:
+    runAsUser: 1000  # Non-root user
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'echo "test" > /data/file.txt']
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: permission-test-pvc
+
+---
+# Scenario 4: Fixed version with fsGroup
+apiVersion: v1
+kind: Pod
+metadata:
+  name: permission-fixed-pod
+  labels:
+    scenario: permission-fixed
+spec:
+  securityContext:
+    fsGroup: 1000  # Fix with fsGroup
+    runAsUser: 1000
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'echo "test" > /data/file.txt && cat /data/file.txt']
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: permission-test-pvc
+
+---
+# Scenario 5: Multi-attach error (RWO volume on different nodes)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rwo-volume
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-node-1
+  labels:
+    scenario: multi-attach
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command: ['sleep', '3600']
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: rwo-volume
+  # Uncomment and set to actual node name
+  # nodeSelector:
+  #   kubernetes.io/hostname: node-1
+
+---
+# Scenario 6: Performance testing pod
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: performance-test-pvc
+  labels:
+    scenario: performance-test
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: performance-test-pod
+spec:
+  containers:
+  - name: test
+    image: ubuntu:latest
+    command: 
+    - sh
+    - -c
+    - |
+      apt-get update && apt-get install -y fio hdparm
+      echo "Ready for performance testing"
+      sleep 3600
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: performance-test-pvc
+
+---
+# Scenario 7: Init container permission fix
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-container-fix
+  labels:
+    scenario: init-permission-fix
+spec:
+  initContainers:
+  - name: fix-permissions
+    image: busybox
+    command: 
+    - sh
+    - -c
+    - |
+      echo "Fixing permissions..."
+      chown -R 1000:1000 /data
+      chmod -R 755 /data
+      echo "Permissions fixed"
+    volumeMounts:
+    - name: data
+      mountPath: /data
+    securityContext:
+      runAsUser: 0  # Init runs as root
+  containers:
+  - name: app
+    image: busybox
+    command: ['sh', '-c', 'echo "Success" > /data/test.txt && sleep 3600']
+    volumeMounts:
+    - name: data
+      mountPath: /data
+    securityContext:
+      runAsUser: 1000  # App runs as non-root
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: permission-test-pvc
+
+---
+# Scenario 8: Snapshot creation test
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: test-snapshot
+  labels:
+    scenario: snapshot-test
+spec:
+  volumeSnapshotClassName: csi-hostpath-snapclass
+  source:
+    persistentVolumeClaimName: permission-test-pvc
+
+---
+# Scenario 9: Resource quota limits
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: storage-quota
+spec:
+  hard:
+    requests.storage: "10Gi"
+    persistentvolumeclaims: "5"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: quota-test-pvc
+  labels:
+    scenario: quota-exceeded
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi  # Exceeds quota!
+
+---
+# Scenario 10: Monitoring setup
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: troubleshooting-scripts
+data:
+  diagnose.sh: |
+    #!/bin/bash
+    echo "=== Storage Diagnostic Report ==="
+    echo ""
+    echo "PVCs:"
+    kubectl get pvc -A
+    echo ""
+    echo "PVs:"
+    kubectl get pv
+    echo ""
+    echo "StorageClasses:"
+    kubectl get sc
+    echo ""
+    echo "Recent Events:"
+    kubectl get events --sort-by=.metadata.creationTimestamp | tail -20
+    
+  check-permissions.sh: |
+    #!/bin/bash
+    POD=$1
+    echo "Checking permissions in pod: $POD"
+    kubectl exec $POD -- ls -la /data
+    echo "Running as user:"
+    kubectl exec $POD -- id
+
+  performance-test.sh: |
+    #!/bin/bash
+    POD=$1
+    echo "Running I/O performance test on pod: $POD"
+    echo "Write test:"
+    kubectl exec $POD -- dd if=/dev/zero of=/data/testfile bs=1M count=100 oflag=direct
+    echo ""
+    echo "Read test:"
+    kubectl exec $POD -- dd if=/data/testfile of=/dev/null bs=1M iflag=direct
+
+---
+# Usage:
+# 1. Apply scenarios one by one
+# 2. Practice troubleshooting each issue
+# 3. Use diagnostic scripts
+# 4. Document solutions
