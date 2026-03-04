@@ -1,0 +1,105 @@
+# coredns-examples.yaml
+# CoreDNS configuration examples
+
+---
+# 1. Custom CoreDNS ConfigMap with hosts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  custom.override: |
+    hosts {
+        10.0.0.100 custom.example.com
+        10.0.0.101 api.example.com
+        fallthrough
+    }
+
+---
+# 2. ExternalName Service for DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-database
+spec:
+  type: ExternalName
+  externalName: database.example.com
+
+---
+# 3. Headless Service for StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-headless
+spec:
+  clusterIP: None
+  selector:
+    app: database
+  ports:
+  - port: 5432
+
+---
+# 4. Pod with custom DNS config
+apiVersion: v1
+kind: Pod
+metadata:
+  name: custom-dns-pod
+spec:
+  dnsPolicy: None
+  dnsConfig:
+    nameservers:
+    - 8.8.8.8
+    - 1.1.1.1
+    searches:
+    - custom.local
+    options:
+    - name: ndots
+      value: "2"
+  containers:
+  - name: app
+    image: busybox
+    command: ['sleep', '3600']
+
+---
+# 5. Pod with ClusterFirstWithHostNet
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostnet-pod
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  containers:
+  - name: app
+    image: nginx
+
+---
+# 6. Complete CoreDNS ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+            lameduck 5s
+        }
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods insecure
+            fallthrough in-addr.arpa ip6.arpa
+            ttl 30
+        }
+        prometheus :9153
+        forward . 8.8.8.8 8.8.4.4 {
+            max_concurrent 1000
+        }
+        cache 300
+        loop
+        reload
+        loadbalance
+    }
