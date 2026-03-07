@@ -1,0 +1,119 @@
+# troubleshooting-toolkit.yaml
+# Network troubleshooting toolkit deployment
+
+---
+# 1. Debug pod with network tools
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netshoot-debug
+  labels:
+    app: debug
+spec:
+  containers:
+  - name: netshoot
+    image: nicolaka/netshoot
+    command: ['sleep', 'infinity']
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+---
+# 2. DNS test pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dnstest
+spec:
+  containers:
+  - name: busybox
+    image: busybox
+    command: ['sleep', '3600']
+
+---
+# 3. Test deployment for connectivity
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-web
+  template:
+    metadata:
+      labels:
+        app: test-web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-web
+spec:
+  selector:
+    app: test-web
+  ports:
+  - port: 80
+
+---
+# 4. Network testing job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: network-test
+spec:
+  template:
+    spec:
+      containers:
+      - name: test
+        image: nicolaka/netshoot
+        command:
+        - sh
+        - -c
+        - |
+          echo "Testing DNS..."
+          nslookup kubernetes.default
+          echo "Testing connectivity..."
+          curl -s http://test-web
+          echo "Tests complete"
+      restartPolicy: Never
+
+---
+# 5. Troubleshooting ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: troubleshooting-scripts
+data:
+  check-connectivity.sh: |
+    #!/bin/bash
+    echo "=== Connectivity Check ==="
+    
+    # Check pod IPs
+    kubectl get pods -o wide
+    
+    # Check services
+    kubectl get svc
+    
+    # Check endpoints
+    kubectl get endpoints
+    
+    # Check CoreDNS
+    kubectl get pods -n kube-system -l k8s-app=kube-dns
+    
+  diagnose-service.sh: |
+    #!/bin/bash
+    SERVICE=$1
+    echo "Diagnosing service: $SERVICE"
+    
+    kubectl get svc $SERVICE
+    kubectl get endpoints $SERVICE
+    kubectl describe svc $SERVICE
