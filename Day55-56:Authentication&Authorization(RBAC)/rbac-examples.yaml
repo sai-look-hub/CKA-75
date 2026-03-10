@@ -1,0 +1,150 @@
+# rbac-examples.yaml
+# Complete RBAC examples
+
+---
+# 1. Custom ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-backend-sa
+  namespace: production
+
+---
+# 2. Role: Pod Reader
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+# 3. RoleBinding: Bind pod-reader to ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods
+  namespace: production
+subjects:
+- kind: ServiceAccount
+  name: app-backend-sa
+  namespace: production
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 4. Role: Deployment Manager
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployment-manager
+  namespace: production
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+
+---
+# 5. Role: ConfigMap Manager
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: configmap-manager
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# 6. Role: Secret Reader (limited)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: secret-reader
+  namespace: production
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+
+---
+# 7. ClusterRole: Node Reader
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: node-reader
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+
+---
+# 8. ClusterRole: Namespace Viewer
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: namespace-viewer
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "watch"]
+
+---
+# 9. ClusterRoleBinding: Bind node-reader
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: node-reader-binding
+subjects:
+- kind: ServiceAccount
+  name: app-backend-sa
+  namespace: production
+roleRef:
+  kind: ClusterRole
+  name: node-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 10. Pod using custom ServiceAccount
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-rbac
+  namespace: production
+spec:
+  serviceAccountName: app-backend-sa
+  containers:
+  - name: app
+    image: nginx
+    command: ['sleep', '3600']
+
+---
+# 11. Deployment with ServiceAccount
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: app-backend-sa
+      containers:
+      - name: api
+        image: nginx
