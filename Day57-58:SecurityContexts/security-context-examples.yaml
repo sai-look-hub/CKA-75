@@ -1,0 +1,255 @@
+# security-context-examples.yaml
+# Complete security context examples
+
+---
+# 1. Basic user/group configuration
+apiVersion: v1
+kind: Pod
+metadata:
+  name: user-group-demo
+spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 3000
+    fsGroup: 2000
+  containers:
+  - name: app
+    image: nginx
+    command: ['sh', '-c', 'sleep 3600']
+
+---
+# 2. Non-root enforcement
+apiVersion: v1
+kind: Pod
+metadata:
+  name: non-root-enforced
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+  containers:
+  - name: app
+    image: nginx
+
+---
+# 3. Read-only root filesystem
+apiVersion: v1
+kind: Pod
+metadata:
+  name: readonly-filesystem
+spec:
+  containers:
+  - name: app
+    image: nginx
+    securityContext:
+      readOnlyRootFilesystem: true
+    volumeMounts:
+    - name: cache
+      mountPath: /var/cache/nginx
+    - name: run
+      mountPath: /var/run
+  volumes:
+  - name: cache
+    emptyDir: {}
+  - name: run
+    emptyDir: {}
+
+---
+# 4. Capabilities management
+apiVersion: v1
+kind: Pod
+metadata:
+  name: capabilities-demo
+spec:
+  containers:
+  - name: app
+    image: nginx
+    securityContext:
+      capabilities:
+        drop:
+        - ALL
+        add:
+        - NET_BIND_SERVICE
+
+---
+# 5. Complete secure pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-pod
+spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 3000
+    runAsNonRoot: true
+    fsGroup: 2000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: app
+    image: nginx
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+        - ALL
+        add:
+        - NET_BIND_SERVICE
+    volumeMounts:
+    - name: cache
+      mountPath: /var/cache/nginx
+    - name: run
+      mountPath: /var/run
+  volumes:
+  - name: cache
+    emptyDir: {}
+  - name: run
+    emptyDir: {}
+
+---
+# 6. Secure deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: secure-app
+  template:
+    metadata:
+      labels:
+        app: secure-app
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+        fsGroup: 2000
+      containers:
+      - name: app
+        image: nginx
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+# 7. StatefulSet with security
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: secure-statefulset
+spec:
+  serviceName: secure
+  replicas: 2
+  selector:
+    matchLabels:
+      app: secure
+  template:
+    metadata:
+      labels:
+        app: secure
+    spec:
+      securityContext:
+        runAsUser: 1000
+        fsGroup: 2000
+      containers:
+      - name: app
+        image: nginx
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: cache
+          mountPath: /var/cache/nginx
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+
+---
+# 8. DaemonSet with security
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: secure-daemonset
+spec:
+  selector:
+    matchLabels:
+      app: secure-daemon
+  template:
+    metadata:
+      labels:
+        app: secure-daemon
+    spec:
+      securityContext:
+        runAsUser: 1000
+      containers:
+      - name: agent
+        image: busybox
+        command: ['sh', '-c', 'while true; do echo "Monitoring..."; sleep 60; done']
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+# 9. Job with security
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: secure-job
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsNonRoot: true
+      containers:
+      - name: job
+        image: busybox
+        command: ['sh', '-c', 'echo "Secure job" && sleep 10']
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      restartPolicy: Never
+
+---
+# 10. CronJob with security
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: secure-cronjob
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          securityContext:
+            runAsUser: 1000
+          containers:
+          - name: job
+            image: busybox
+            command: ['sh', '-c', 'date']
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+          restartPolicy: Never
