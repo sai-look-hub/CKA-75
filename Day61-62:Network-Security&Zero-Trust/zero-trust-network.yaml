@@ -1,0 +1,289 @@
+# zero-trust-network.yaml
+# Complete zero-trust network implementation
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zero-trust
+  labels:
+    istio-injection: enabled  # Automatic sidecar injection
+    name: zero-trust
+
+---
+# ServiceAccounts
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frontend-sa
+  namespace: zero-trust
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend-sa
+  namespace: zero-trust
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: database-sa
+  namespace: zero-trust
+
+---
+# Network Policy: Default Deny All
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: zero-trust
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Network Policy: Allow DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: zero-trust
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Network Policy: Frontend → Backend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-to-backend
+  namespace: zero-trust
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# Network Policy: Backend → Database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-to-database
+  namespace: zero-trust
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# Istio: Strict mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: zero-trust
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# Istio: Deny All Authorization
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: zero-trust
+spec:
+  {}
+
+---
+# Istio: Allow Frontend → Backend
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: frontend-to-backend
+  namespace: zero-trust
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/zero-trust/sa/frontend-sa"
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+
+---
+# Istio: Allow Backend → Database
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: backend-to-database
+  namespace: zero-trust
+spec:
+  selector:
+    matchLabels:
+      app: database
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/zero-trust/sa/backend-sa"
+
+---
+# Application: Frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: zero-trust
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+      tier: frontend
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: frontend
+        version: v1
+    spec:
+      serviceAccountName: frontend-sa
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: zero-trust
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+
+---
+# Application: Backend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: zero-trust
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+      tier: backend
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: backend
+        version: v1
+    spec:
+      serviceAccountName: backend-sa
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: zero-trust
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 80
+
+---
+# Application: Database
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: zero-trust
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+      tier: database
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: database
+        tier: database
+        version: v1
+    spec:
+      serviceAccountName: database-sa
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_PASSWORD
+          value: password
+        ports:
+        - containerPort: 5432
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database
+  namespace: zero-trust
+spec:
+  selector:
+    app: database
+  ports:
+  - port: 5432
