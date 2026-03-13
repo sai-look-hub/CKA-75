@@ -1,0 +1,200 @@
+# pod-security-standards.yaml
+# Complete Pod Security Standards examples
+
+---
+# 1. Privileged Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: privileged-ns
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
+
+---
+# 2. Baseline Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: baseline-ns
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
+
+---
+# 3. Restricted Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: restricted-ns
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+# 4. Gradual Rollout Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gradual-ns
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+# 5. Restricted-Compliant Pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: restricted-pod
+  namespace: restricted-ns
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 2000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: app
+    image: nginx:1.21
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop:
+        - ALL
+
+---
+# 6. Restricted-Compliant Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-deployment
+  namespace: restricted-ns
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: secure-app
+  template:
+    metadata:
+      labels:
+        app: secure-app
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: app
+        image: nginx:1.21
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - containerPort: 8080
+
+---
+# 7. Baseline-Compliant Pod (runs as root but otherwise safe)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: baseline-pod
+  namespace: baseline-ns
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    # Can run as root in baseline
+    # But no privileged, no host namespaces, etc.
+
+---
+# 8. StatefulSet with Restricted
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: secure-statefulset
+  namespace: restricted-ns
+spec:
+  serviceName: secure
+  replicas: 2
+  selector:
+    matchLabels:
+      app: secure
+  template:
+    metadata:
+      labels:
+        app: secure
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: app
+        image: nginx:1.21
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+
+---
+# 9. DaemonSet with Baseline (monitoring agent)
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: monitoring-agent
+  namespace: baseline-ns
+spec:
+  selector:
+    matchLabels:
+      app: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring
+    spec:
+      containers:
+      - name: agent
+        image: monitoring:latest
+        # Can run as root in baseline
+        # Needed for node-level monitoring
+
+---
+# 10. Production Namespace Template
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    environment: production
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: v1.28
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: v1.28
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: v1.28
