@@ -1,0 +1,250 @@
+# image-security-Day65-66.yaml
+# Complete image security examples for Day 65-66
+
+---
+# 1. ImagePullSecret for Private Registry
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-credentials
+  namespace: production
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: eyJhdXRocyI6eyJwcml2YXRlLXJlZ2lzdHJ5LmNvbSI6eyJ1c2VybmFtZSI6Im15dXNlciIsInBhc3N3b3JkIjoibXlwYXNzIiwiYXV0aCI6ImJYbDFjMlZ5T20xNWNHRnpjdz09In19fQ==
+
+---
+# 2. ServiceAccount with ImagePullSecret
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-serviceaccount
+  namespace: production
+imagePullSecrets:
+- name: registry-credentials
+
+---
+# 3. Pod using Private Registry
+apiVersion: v1
+kind: Pod
+metadata:
+  name: private-registry-pod
+  namespace: production
+spec:
+  serviceAccountName: app-serviceaccount
+  containers:
+  - name: app
+    image: private-registry.com/myapp:v1.0
+
+---
+# 4. Deployment with Specific Image Digest
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-deployment
+  namespace: production
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: secure-app
+  template:
+    metadata:
+      labels:
+        app: secure-app
+    spec:
+      imagePullSecrets:
+      - name: registry-credentials
+      containers:
+      - name: app
+        # Using specific digest instead of tag
+        image: myregistry.com/app@sha256:4c0fdaa8b6341bfdeca5f18f7837462c80cff90527ee35ef185571e1c327beac
+        ports:
+        - containerPort: 8080
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+# 5. Kyverno Policy: Allowed Registries Only
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: allowed-registries
+spec:
+  validationFailureAction: enforce
+  background: false
+  rules:
+  - name: check-registry
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          - Deployment
+    validate:
+      message: "Images must be from approved registries only (myregistry.com or gcr.io/myproject)"
+      pattern:
+        spec:
+          =(template):
+            spec:
+              containers:
+              - image: "myregistry.com/* | gcr.io/myproject/*"
+
+---
+# 6. Kyverno Policy: Require Image Digest
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-image-digest
+spec:
+  validationFailureAction: enforce
+  background: false
+  rules:
+  - name: check-digest
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "Images must use digest (@sha256:) instead of tags"
+      pattern:
+        spec:
+          containers:
+          - image: "*@sha256:*"
+
+---
+# 7. Kyverno Policy: Disallow Latest Tag
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+spec:
+  validationFailureAction: enforce
+  background: false
+  rules:
+  - name: no-latest
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          - Deployment
+    validate:
+      message: "Using :latest tag is not allowed. Use specific version tags."
+      pattern:
+        spec:
+          =(template):
+            spec:
+              containers:
+              - image: "!*:latest"
+
+---
+# 8. Sigstore ClusterImagePolicy: Require Signed Images
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: require-signed-images
+spec:
+  images:
+  - glob: "myregistry.com/**"
+  - glob: "gcr.io/myproject/**"
+  authorities:
+  - key:
+      data: |
+        -----BEGIN PUBLIC KEY-----
+        MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
+        -----END PUBLIC KEY-----
+
+---
+# 9. CronJob: Automated Image Scanning
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: image-scanner
+  namespace: security
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: image-scanner-sa
+          restartPolicy: OnFailure
+          containers:
+          - name: trivy-scanner
+            image: aquasec/trivy:latest
+            command:
+            - sh
+            - -c
+            - |
+              echo "Scanning all running images..."
+              kubectl get pods -A -o json | \
+              jq -r '.items[].spec.containers[].image' | \
+              sort -u | \
+              while read image; do
+                echo "Scanning: $image"
+                trivy image --severity HIGH,CRITICAL "$image"
+              done
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: image-scanner-sa
+  namespace: security
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: image-scanner-role
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: image-scanner-binding
+subjects:
+- kind: ServiceAccount
+  name: image-scanner-sa
+  namespace: security
+roleRef:
+  kind: ClusterRole
+  name: image-scanner-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 10. NetworkPolicy: Restrict Registry Access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-registry-only
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow only approved registry
+  - to:
+    - ipBlock:
+        cidr: 10.0.1.0/24  # Private registry CIDR
+    ports:
+    - protocol: TCP
+      port: 443
