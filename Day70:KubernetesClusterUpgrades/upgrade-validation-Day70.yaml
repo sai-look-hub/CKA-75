@@ -1,0 +1,101 @@
+# upgrade-validation-Day70.yaml
+# Test applications to validate cluster upgrade
+
+---
+# Test Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upgrade-test
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: upgrade-test
+  template:
+    metadata:
+      labels:
+        app: upgrade-test
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upgrade-test
+  namespace: default
+spec:
+  selector:
+    app: upgrade-test
+  ports:
+  - port: 80
+    targetPort: 80
+  type: NodePort
+
+---
+# PodDisruptionBudget (ensures HA during upgrade)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: upgrade-test-pdb
+  namespace: default
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: upgrade-test
+
+---
+# ConfigMap for validation
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: upgrade-validation
+  namespace: default
+data:
+  pre-upgrade-version: "v1.28.0"
+  post-upgrade-version: "v1.29.0"
+  upgrade-date: "2026-03-18"
+  validation-script: |
+    #!/bin/bash
+    echo "=== Cluster Upgrade Validation ==="
+    
+    echo "1. Check node versions:"
+    kubectl get nodes -o wide
+    
+    echo ""
+    echo "2. Check component versions:"
+    kubectl version --short
+    
+    echo ""
+    echo "3. Check all pods:"
+    kubectl get pods -A | grep -v Running | grep -v Completed
+    
+    echo ""
+    echo "4. Check system pods:"
+    kubectl get pods -n kube-system
+    
+    echo ""
+    echo "5. Test application access:"
+    kubectl run test --image=busybox --rm -it --restart=Never -- \
+      wget -O- http://upgrade-test
+    
+    echo ""
+    echo "=== Validation Complete ==="
