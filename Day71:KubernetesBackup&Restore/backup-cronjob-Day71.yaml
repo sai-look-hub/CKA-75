@@ -1,0 +1,93 @@
+# backup-cronjob-Day71.yaml
+# Kubernetes CronJob for automated etcd backups
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backup-system
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: etcd-backup-script
+  namespace: backup-system
+data:
+  backup.sh: |
+    #!/bin/bash
+    set -e
+    
+    BACKUP_FILE=/backup/etcd-$(date +%Y%m%d-%H%M%S).db
+    
+    echo "Creating etcd backup..."
+    etcdctl snapshot save $BACKUP_FILE \
+      --endpoints=https://127.0.0.1:2379 \
+      --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+      --cert=/etc/kubernetes/pki/etcd/server.crt \
+      --key=/etc/kubernetes/pki/etcd/server.key
+    
+    echo "Verifying backup..."
+    etcdctl snapshot status $BACKUP_FILE --write-out=table
+    
+    echo "Backup completed: $BACKUP_FILE"
+    echo "Size: $(du -h $BACKUP_FILE | cut -f1)"
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: backup-system
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          hostNetwork: true
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: ""
+          tolerations:
+          - effect: NoSchedule
+            key: node-role.kubernetes.io/control-plane
+          containers:
+          - name: backup
+            image: registry.k8s.io/etcd:3.5.9-0
+            env:
+            - name: ETCDCTL_API
+              value: "3"
+            command:
+            - /bin/sh
+            - /scripts/backup.sh
+            volumeMounts:
+            - name: etcd-certs
+              mountPath: /etc/kubernetes/pki/etcd
+              readOnly: true
+            - name: backup
+              mountPath: /backup
+            - name: script
+              mountPath: /scripts
+          volumes:
+          - name: etcd-certs
+            hostPath:
+              path: /etc/kubernetes/pki/etcd
+              type: Directory
+          - name: backup
+            hostPath:
+              path: /var/backups/etcd
+              type: DirectoryOrCreate
+          - name: script
+            configMap:
+              name: etcd-backup-script
+              defaultMode: 0755
+          restartPolicy: OnFailure
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: etcd-backup-sa
+  namespace: backup-system
