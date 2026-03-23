@@ -1,4 +1,4 @@
-# 📖 GUIDEME: Cluster Upgrades - Day 71
+# 📖 GUIDEME: Cluster Upgrades - Day 70
 
 ## 🎯 Complete Walkthrough (4-6 hours)
 
