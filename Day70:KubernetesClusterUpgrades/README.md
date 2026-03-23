@@ -1,4 +1,4 @@
-# Day 71: Kubernetes Cluster Upgrades
+# Day 70: Kubernetes Cluster Upgrades
 
 ## 📋 Overview
 
