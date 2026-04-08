@@ -1,0 +1,187 @@
+# alerting-rules-Day72.yaml
+# Prometheus alerting rules for Kubernetes cluster health monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerts
+  namespace: monitoring
+  labels:
+    app: prometheus
+    day: "72"
+data:
+  kubernetes-alerts.yml: |
+    groups:
+      # ─────────────────────────────────────────
+      # Pod Health Alerts
+      # ─────────────────────────────────────────
+      - name: pod-health
+        interval: 30s
+        rules:
+          - alert: PodCrashLooping
+            expr: |
+              rate(kube_pod_container_status_restarts_total[15m]) * 60 * 15 > 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash looping"
+              description: "Container {{ $labels.container }} has restarted {{ printf \"%.0f\" $value }} times in 15 minutes."
+
+          - alert: PodNotReady
+            expr: |
+              kube_pod_status_ready{condition="true"} == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is not ready"
+              description: "Pod has been in a non-ready state for more than 10 minutes."
+
+          - alert: PodOOMKilled
+            expr: |
+              kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} OOMKilled"
+              description: "Container {{ $labels.container }} was OOMKilled. Increase memory limits."
+
+          - alert: PodImagePullBackOff
+            expr: |
+              kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull"} == 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} image pull failing"
+              description: "Container {{ $labels.container }} cannot pull image. Check image name and registry credentials."
+
+      # ─────────────────────────────────────────
+      # Node Health Alerts
+      # ─────────────────────────────────────────
+      - name: node-health
+        interval: 30s
+        rules:
+          - alert: NodeNotReady
+            expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node {{ $labels.node }} is not ready"
+              description: "Node has been in NotReady state for more than 5 minutes."
+
+          - alert: NodeHighCPU
+            expr: |
+              (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance)) * 100 > 85
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage on node {{ $labels.instance }}"
+              description: "Node CPU usage is {{ printf \"%.1f\" $value }}% for more than 10 minutes."
+
+          - alert: NodeHighMemory
+            expr: |
+              (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 85
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage on node {{ $labels.instance }}"
+              description: "Node memory usage is {{ printf \"%.1f\" $value }}% for more than 10 minutes."
+
+          - alert: NodeDiskPressure
+            expr: |
+              node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100 < 15
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Low disk space on node {{ $labels.instance }}"
+              description: "Disk usage on {{ $labels.mountpoint }} is above 85%. Available: {{ printf \"%.1f\" $value }}%."
+
+      # ─────────────────────────────────────────
+      # Deployment Health Alerts
+      # ─────────────────────────────────────────
+      - name: deployment-health
+        interval: 30s
+        rules:
+          - alert: DeploymentReplicasMismatch
+            expr: |
+              kube_deployment_spec_replicas != kube_deployment_status_replicas_available
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has unavailable replicas"
+              description: "Expected {{ $value }} replicas available but not all are ready."
+
+          - alert: DeploymentRolloutStuck
+            expr: |
+              kube_deployment_status_condition{condition="Progressing",status="false"} == 1
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} rollout is stuck"
+              description: "Deployment rollout has not progressed for 15 minutes."
+
+      # ─────────────────────────────────────────
+      # Resource Quota Alerts
+      # ─────────────────────────────────────────
+      - name: resource-quotas
+        interval: 60s
+        rules:
+          - alert: NamespaceQuotaCPUNearLimit
+            expr: |
+              kube_resourcequota{resource="requests.cpu",type="used"} /
+              kube_resourcequota{resource="requests.cpu",type="hard"} * 100 > 80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Namespace {{ $labels.namespace }} CPU quota at {{ printf \"%.0f\" $value }}%"
+              description: "CPU resource quota usage is above 80% in namespace {{ $labels.namespace }}."
+
+          - alert: NamespaceQuotaMemoryNearLimit
+            expr: |
+              kube_resourcequota{resource="requests.memory",type="used"} /
+              kube_resourcequota{resource="requests.memory",type="hard"} * 100 > 80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Namespace {{ $labels.namespace }} memory quota at {{ printf \"%.0f\" $value }}%"
+              description: "Memory resource quota usage is above 80% in namespace {{ $labels.namespace }}."
+
+      # ─────────────────────────────────────────
+      # API Server Alerts
+      # ─────────────────────────────────────────
+      - name: apiserver-health
+        interval: 30s
+        rules:
+          - alert: KubeAPIServerHighLatency
+            expr: |
+              histogram_quantile(0.99,
+                sum(rate(apiserver_request_duration_seconds_bucket{subresource!="log",verb!~"CONNECT|WATCHLIST|WATCH|PROXY"}[10m])) by (verb, le)
+              ) > 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kube API server p99 latency above 1s for {{ $labels.verb }}"
+              description: "API server 99th percentile latency for {{ $labels.verb }} requests is {{ printf \"%.2f\" $value }}s."
+
+          - alert: KubeAPIServerErrorRate
+            expr: |
+              sum(rate(apiserver_request_total{code=~"5.."}[5m])) /
+              sum(rate(apiserver_request_total[5m])) * 100 > 5
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Kube API server error rate above 5%"
+              description: "API server is returning {{ printf \"%.1f\" $value }}% 5xx errors."
