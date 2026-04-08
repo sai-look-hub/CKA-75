@@ -1,0 +1,224 @@
+# sample-app-Day72.yaml
+# Instrumented sample application for observability demo
+# Exposes /metrics endpoint and produces structured logs
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    day: "72"
+    purpose: observability-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-app
+  namespace: demo
+  labels:
+    app: sample-app
+    version: v1
+    day: "72"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sample-app
+  template:
+    metadata:
+      labels:
+        app: sample-app
+        version: v1
+      annotations:
+        # Tell Prometheus to scrape this pod
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: sample-app
+          # Using a publicly available instrumented sample app
+          image: ghcr.io/open-telemetry/opentelemetry-demo/adservice:1.9.0
+          ports:
+            - containerPort: 9555
+              name: grpc
+            - containerPort: 8080
+              name: metrics
+          env:
+            - name: PORT
+              value: "9555"
+            - name: OTEL_SERVICE_NAME
+              value: "sample-app"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://localhost:4317"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 300m
+              memory: 512Mi
+          livenessProbe:
+            grpc:
+              port: 9555
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          readinessProbe:
+            grpc:
+              port: 9555
+            initialDelaySeconds: 20
+            periodSeconds: 5
+---
+# Simpler nginx-based sample for log generation
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+  namespace: demo
+  labels:
+    app: nginx-demo
+    day: "72"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-demo
+  template:
+    metadata:
+      labels:
+        app: nginx-demo
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9113"
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+        # nginx-prometheus-exporter sidecar
+        - name: nginx-exporter
+          image: nginx/nginx-prometheus-exporter:1.1.0
+          args:
+            - -nginx.scrape-uri=http://localhost:80/nginx_status
+          ports:
+            - containerPort: 9113
+              name: metrics
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nginx-demo-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-demo-config
+  namespace: demo
+  labels:
+    app: nginx-demo
+    day: "72"
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        # Serve status for exporter
+        location /nginx_status {
+            stub_status on;
+            allow 127.0.0.1;
+            deny all;
+        }
+
+        # Health check endpoint
+        location /healthz {
+            return 200 'OK';
+            add_header Content-Type text/plain;
+        }
+
+        # Main app
+        location / {
+            root /usr/share/nginx/html;
+            index index.html;
+            access_log /dev/stdout;
+            error_log /dev/stderr warn;
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-demo
+  namespace: demo
+  labels:
+    app: nginx-demo
+    day: "72"
+spec:
+  selector:
+    app: nginx-demo
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: metrics
+      port: 9113
+      targetPort: 9113
+---
+# HPA for nginx-demo to demonstrate Metrics Server usage
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-demo-hpa
+  namespace: demo
+  labels:
+    day: "72"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-demo
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70
