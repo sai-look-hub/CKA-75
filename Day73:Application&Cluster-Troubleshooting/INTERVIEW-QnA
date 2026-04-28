@@ -1,0 +1,220 @@
+# INTERVIEW-QA-Day73.md
+# Kubernetes Troubleshooting — Interview Questions & Answers
+
+---
+
+## 🟢 BEGINNER LEVEL
+
+---
+
+**Q1. A pod is in CrashLoopBackOff. What is your first step?**
+
+**A:** My first step is `kubectl logs <pod> --previous -n <namespace>`. The `--previous` flag is critical because the current container has already crashed — I need logs from the previous instance. I look for the last few lines showing why the process exited. Then I check `kubectl describe pod` for the exit code (137=OOM, 1=app error) and look at the Events section for scheduling or configuration issues.
+
+---
+
+**Q2. What does `ImagePullBackOff` mean and how do you fix it?**
+
+**A:** It means Kubernetes cannot pull the container image. The "BackOff" suffix means it has tried multiple times with increasing delays. Common causes:
+- Wrong image tag → fix the tag in the pod spec
+- Private registry without credentials → create a `docker-registry` secret and reference it in `imagePullSecrets`
+- Registry unreachable from node → check firewall/egress rules
+- Docker Hub rate limiting → add authentication even for public images
+
+I distinguish between `ErrImagePull` (transient, first failure) and `ImagePullBackOff` (repeated failures) — both resolve by fixing the image reference or credentials.
+
+---
+
+**Q3. How do you check why a pod is Pending?**
+
+**A:** `kubectl describe pod <pod>` and read the `Events` section at the bottom. Common messages:
+- `0/3 nodes available: 3 Insufficient cpu` → reduce resource requests or add nodes
+- `didn't match node selector` → fix pod's nodeSelector or node labels
+- `had taints that pod didn't tolerate` → add tolerations to pod spec
+- `has unbound PersistentVolumeClaims` → fix PVC/StorageClass
+
+I also run `kubectl top nodes` to see actual usage and `kubectl describe nodes` to see capacity vs. allocated.
+
+---
+
+**Q4. How do you debug a service that isn't routing traffic?**
+
+**A:** I always start with `kubectl get endpoints <service>`. If `ENDPOINTS` shows `<none>`, the selector doesn't match any pods. Then:
+1. `kubectl describe svc <svc>` to see the selector
+2. `kubectl get pods --show-labels` to see actual pod labels
+3. Compare them — they must match exactly (including all key-value pairs)
+
+If endpoints exist but traffic still fails, I test connectivity: `kubectl run curl-test --image=curlimages/curl --rm -it -- curl <clusterIP>:<port>`, and then check NetworkPolicies.
+
+---
+
+**Q5. What is the difference between `kubectl logs` and `kubectl logs --previous`?**
+
+**A:** `kubectl logs <pod>` shows logs from the currently running container instance. `kubectl logs <pod> --previous` shows logs from the last terminated instance. In CrashLoopBackOff, the current container might be in a 2-minute backoff sleep — `--previous` gives you the actual crash output from the last run. It's the most important flag when debugging crashes.
+
+---
+
+## 🟡 INTERMEDIATE LEVEL
+
+---
+
+**Q6. Walk me through debugging a 503 from a LoadBalancer service.**
+
+**A:** I work from the outside in:
+1. `kubectl get svc` — verify EXTERNAL-IP is assigned (if `<pending>`, check cloud provider or metallb)
+2. `kubectl get endpoints <svc>` — if `<none>`, it's a selector issue. Fix label matching
+3. If endpoints exist: `kubectl exec` into a pod and curl the ClusterIP directly — isolates LB from service
+4. `kubectl describe pod` on each endpoint — are the pods actually Ready? Readiness probes passing?
+5. Check if the container is listening on the expected port: `kubectl exec -it <pod> -- ss -tlnp`
+6. `kubectl get networkpolicies` — anything blocking ingress?
+
+---
+
+**Q7. A node goes NotReady. How do you handle it without impacting production?**
+
+**A:** Immediate action: `kubectl cordon <node>` to prevent new pods from scheduling there. Then `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data` to evict existing pods (they'll reschedule elsewhere). Now I can safely investigate.
+
+On the node: `systemctl status kubelet` and `journalctl -u kubelet -n 200`. I check disk (`df -h`), memory (`free -m`), and process count. Then fix the root cause — could be disk pressure (clean images/logs), kubelet crash (restart it), or network plugin failure (restart CNI pods).
+
+---
+
+**Q8. How do you debug a distroless container that has no shell?**
+
+**A:** Two approaches:
+1. **Ephemeral containers**: `kubectl debug -it <pod> --image=busybox --target=<container>` — injects a debug container that shares the process namespace with the target, so I can run `ps`, `ls /proc/<pid>/fd`, etc.
+2. **Pod copy**: `kubectl debug pod/<pod> --copy-to=debug-copy --image=ubuntu -- bash` — creates a new pod with a modified image that has debugging tools, sharing the same volumes.
+
+Ephemeral containers are preferred in production since they attach to the running pod without restoring it.
+
+---
+
+**Q9. What are Kubernetes pod conditions and how do they differ from pod phase?**
+
+**A:** Pod **phase** is the top-level state: Pending, Running, Succeeded, Failed, Unknown. Pod **conditions** are more granular boolean status indicators:
+- `PodScheduled` — has the pod been assigned to a node
+- `Initialized` — all init containers completed
+- `ContainersReady` — all containers are ready
+- `Ready` — pod is ready to receive traffic (all containers ready + readiness probes pass)
+
+A pod can be in `Running` phase but NOT `Ready` (e.g., failing readiness probe). Services only route to pods where `Ready=True`. This is a common source of confusion in interviews.
+
+---
+
+**Q10. Explain how you'd diagnose a memory leak in a pod without restarting it.**
+
+**A:** 
+1. `kubectl top pod <pod> --containers` — watch memory trend over time
+2. `kubectl exec -it <pod> -- cat /sys/fs/cgroup/memory/memory.usage_in_bytes` — real-time cgroup memory
+3. If the pod has debugging tools: `kubectl exec -it <pod> -- pmap -x <pid>` to see process memory maps
+4. For Go apps: hit the pprof endpoint `/debug/pprof/heap`
+5. Check container's OOM score: `kubectl exec <pod> -- cat /proc/1/oom_score`
+
+I'd then set a memory limit slightly above current usage to trigger OOMKill and capture a heap dump before it dies, or configure Prometheus + Grafana memory graphs to see the leak rate.
+
+---
+
+## 🔴 ADVANCED / SENIOR LEVEL
+
+---
+
+**Q11. Describe your process for debugging a cluster-wide issue where multiple pods are failing simultaneously.**
+
+**A:** Multiple simultaneous failures usually point to infrastructure, not application. My process:
+
+1. **Scope** — are failures in one namespace or cluster-wide? One node or all nodes?
+2. **Control plane** — `kubectl get pods -n kube-system` — are API server, scheduler, controller-manager, etcd healthy?
+3. **etcd** — run `etcdctl endpoint health`. etcd degradation causes write failures across the cluster
+4. **Node check** — `kubectl get nodes` — any NotReady? Check if pods are being evicted from a single node
+5. **Events** — `kubectl get events -A --sort-by='.lastTimestamp' | tail -50` — cluster-wide event feed
+6. **Recent changes** — what changed recently? `kubectl rollout history` across namespaces, any recent certificate rotations, node replacements?
+7. **Resource quotas** — did a namespace hit quota at the same time?
+
+I've seen this pattern with etcd leader elections causing ~30s write blackouts, certificate expiry affecting all API calls simultaneously, and CNI plugin crashes breaking network for all pods on affected nodes.
+
+---
+
+**Q12. How does the Kubernetes garbage collector interact with pod eviction and troubleshooting?**
+
+**A:** The garbage collector (GC) runs in the controller manager and cleans up orphaned objects — pods whose owner (ReplicaSet, Job) is deleted, with cascade deletion governed by `ownerReferences`. For troubleshooting:
+
+- Evicted pods are NOT garbage collected immediately — they stay visible in `kubectl get pods` with status `Evicted`. I use `kubectl get pods | grep Evicted` to see how many were evicted and from which nodes (indicating pressure events)
+- `kubectl delete pods --field-selector=status.phase=Failed -n <ns>` cleans failed pods
+- The GC uses finalizers to control deletion order — stuck `Terminating` pods often have finalizers that aren't being cleared because the controller that manages them is down
+
+For image GC specifically, kubelet removes images when disk hits `imageGCHighThresholdPercent` (default 85%). You can see this in `journalctl -u kubelet | grep "image garbage"`.
+
+---
+
+**Q13. A deployment rollout is stuck at 50%. How do you diagnose this?**
+
+**A:** 
+```bash
+kubectl rollout status deployment/<name> -n <ns>
+# "Waiting for deployment rollout to finish: 2 out of 4 new replicas updated"
+
+kubectl describe deployment <name> -n <ns>
+# Check: Conditions section, especially "Progressing" and "Available"
+
+kubectl get pods -n <ns> -l app=<label>
+# New pods (new ReplicaSet) in bad state while old pods still running
+```
+
+Common causes:
+1. **New pods crashing** — new image has bug, old pods kept alive by maxUnavailable
+2. **Readiness probe failing** — new pods never become Ready, so deployment won't proceed
+3. **Insufficient resources** — can't schedule new pods, can't remove old ones (maxUnavailable=0 by default)
+4. **PodDisruptionBudget** — PDB blocking old pod removal
+
+Fix: either roll back (`kubectl rollout undo`) or fix the root cause and let the rollout continue. I always check `kubectl describe rs <new-replicaset>` to see the new RS events.
+
+---
+
+**Q14. How would you troubleshoot intermittent pod failures that only happen under load?**
+
+**A:** Intermittent + load-related failures are the hardest class. My approach:
+
+1. **Metrics first** — Prometheus queries for CPU throttling (`container_cpu_cfs_throttled_seconds_total`), memory near limit, network errors
+2. **Resource limits** — CPU throttling is silent but lethal; a container can be at 1000m request but throttled to 100m under burst. Check `kubectl top pod --containers`
+3. **HPA behavior** — is HPA scaling fast enough? Check `kubectl describe hpa` for scale events
+4. **Connection pool exhaustion** — DB connections, HTTP client pools; look for `connection refused` or `timeout` in logs under load
+5. **readinessProbe thresholds** — is the probe timing out under load, causing the pod to be removed from service rotation during high traffic?
+6. **liveness probe killing** — is liveness probe too aggressive and restarting healthy-but-busy pods?
+
+I'd use `kubectl exec` to run `curl -w "%{time_total}" http://localhost:<port>/health` under simulated load to see actual response times vs probe timeouts.
+
+---
+
+**Q15. What is the role of the scheduler extender and how can scheduler bugs cause pod placement issues?**
+
+**A:** The kube-scheduler has a plugin framework (scheduling framework) with extension points: Filter, Score, Reserve, Permit, Bind. Scheduler extenders are external webhooks that participate in these phases for custom scheduling logic (e.g., GPU topology awareness, rack-aware placement).
+
+Scheduler bugs manifest as pods stuck in Pending with no events, or pods being placed suboptimally. Debugging:
+```bash
+# Check scheduler logs
+kubectl logs -n kube-system kube-scheduler-<node> --tail=200
+
+# Enable verbose scheduler logging (if configurable)
+# Look for "failed to fit in any node" or "extender failed"
+
+# Check if it's an extender issue
+# Extender timeouts cause scheduler to skip that node
+```
+
+In production, I've seen extender timeouts (slow external webhook) cause all scheduling to pause because the scheduler waits for extender responses. The fix was adding a timeout + `ignorable: true` in the extender config so scheduler falls back to default behavior on timeout.
+
+---
+
+## 📋 Quick-Fire Round (Common in CKA/CKAD)
+
+| Question | Answer |
+|----------|--------|
+| Command to check why a pod was evicted? | `kubectl describe pod <pod>` → Events |
+| How to see previous container logs? | `kubectl logs --previous` |
+| Command to test DNS inside cluster? | `kubectl run test --image=busybox --rm -it -- nslookup <svc>` |
+| How to force delete a stuck pod? | `kubectl delete pod <pod> --grace-period=0 --force` |
+| Check if SA can get pods? | `kubectl auth can-i get pods --as=system:serviceaccount:<ns>:<sa>` |
+| Command to check resource quota usage? | `kubectl describe resourcequota -n <ns>` |
+| How to see cluster-wide events? | `kubectl get events -A --sort-by='.lastTimestamp'` |
+| Check certificate expiry? | `kubeadm certs check-expiration` |
+| Debug pod without shell? | `kubectl debug -it <pod> --image=busybox` |
+| Check etcd health? | `etcdctl endpoint health` (with certs) |
