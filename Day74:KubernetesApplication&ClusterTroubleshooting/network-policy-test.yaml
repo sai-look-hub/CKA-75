@@ -1,0 +1,97 @@
+# manifests/network-policy-test.yaml
+# Test network connectivity between namespaces
+# Usage:
+#   kubectl apply -f network-policy-test.yaml
+#   kubectl exec -it netpol-client -n netpol-test -- wget -qO- http://netpol-server.netpol-server.svc.cluster.local
+
+---
+# Server namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netpol-server
+  labels:
+    name: netpol-server
+
+---
+# Client namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netpol-test
+  labels:
+    name: netpol-test
+
+---
+# Server deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netpol-server
+  namespace: netpol-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netpol-server
+  template:
+    metadata:
+      labels:
+        app: netpol-server
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netpol-server
+  namespace: netpol-server
+spec:
+  selector:
+    app: netpol-server
+  ports:
+  - port: 80
+    targetPort: 80
+
+---
+# Client pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netpol-client
+  namespace: netpol-test
+  labels:
+    app: netpol-client
+spec:
+  containers:
+  - name: client
+    image: busybox:1.35
+    command: ["sleep", "3600"]
+  restartPolicy: Never
+
+---
+# NetworkPolicy: Only allow traffic from netpol-test namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-test-ns
+  namespace: netpol-server
+spec:
+  podSelector:
+    matchLabels:
+      app: netpol-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: netpol-test
+    ports:
+    - protocol: TCP
+      port: 80
