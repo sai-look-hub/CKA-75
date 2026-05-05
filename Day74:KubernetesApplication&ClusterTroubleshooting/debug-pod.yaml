@@ -1,0 +1,53 @@
+# manifests/debug-pod.yaml
+# Ephemeral network + DNS debug pod
+# Usage: kubectl apply -f debug-pod.yaml
+# Then: kubectl exec -it netshoot-debug -- bash
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netshoot-debug
+  namespace: default
+  labels:
+    purpose: debugging
+  annotations:
+    description: "Temporary debug pod for network and DNS troubleshooting"
+spec:
+  containers:
+  - name: netshoot
+    image: nicolaka/netshoot:latest
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "100m"
+        memory: "128Mi"
+    securityContext:
+      runAsNonRoot: false   # Needs root for some network tools
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 0
+---
+# Minimal busybox debug pod for quick DNS/curl tests
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox-debug
+  namespace: default
+  labels:
+    purpose: debugging
+spec:
+  containers:
+  - name: busybox
+    image: busybox:1.35
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        cpu: "10m"
+        memory: "16Mi"
+      limits:
+        cpu: "50m"
+        memory: "32Mi"
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 0
